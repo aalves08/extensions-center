@@ -1,0 +1,23 @@
+apiVersion: v1
+entries:
+  extensions-center:
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-09-21T11:18:06.809601852Z"
+    description: extensions-center plugin
+    digest: efc3fd94936386204b9fbd5336b1e1844257dbb8ea59c7f097548420b7426298
+    name: extensions-center
+    type: application
+    urls:
+    - assets/extensions-center/extensions-center-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-09-21T11:18:06.809313739Z"
