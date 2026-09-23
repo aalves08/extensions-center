@@ -8,6 +8,8 @@ extensionsCenter:
     compatTests: Compatibility Tests
     knownRepos: Known Extensions
     npmMetrics: NPM Metrics
+    importAnalysis: Import Analysis
+    bundleAnalysis: Bundle Analysis
     settings: Settings
 
   common:
@@ -160,6 +162,162 @@ extensionsCenter:
       lastMonth: Last 30 days
       lastQuarter: Last 90 days
       lastYear: Last 12 months
+
+  analysis:
+    stale: >-
+      This analysis is over two weeks old and may describe versions that have
+      since been superseded. Press Refresh when you want current data.
+    phase:
+      targets: Resolving extension versions
+      modules: Reading rancher/dashboard module sizes
+      listing: Listing published assets
+      sources: Reading extension sources
+      maps: Reading source maps
+      saving: Saving results
+    errors:
+      tooLarge: >-
+        The analysis came to {size} KB, over the {limit} KB ConfigMap limit, so
+        it was not saved. The results below are still accurate, but they will be
+        gone on the next page load.
+      treeTruncated: >-
+        GitHub truncated the rancher/dashboard file listing, so module sizes
+        cannot be resolved reliably. This analysis was not saved.
+      noSources: No source files found in this repository.
+      noPluginDir: No published plugin directory found on gh-pages.
+
+  importAnalysis:
+    title: Import Analysis
+    description: >-
+      What each official extension imports from @rancher/shell and
+      @rancher/components, read from its source at the latest released tag.
+    empty: No data. Press Refresh to run the analysis.
+    notBuilt: >-
+      This analysis has not been run yet. Press Refresh to scan the official
+      extensions. The result is saved, so later visits load it without
+      re-scanning.
+    refreshCost: >-
+      Scans every official extension repo and downloads around 1,150 source
+      files. Takes 30–90 seconds.
+    sourceNote: 'Module sizes resolved against {ref}.'
+    selectExtension: Extension
+    unresolvedHint: >-
+      This path does not resolve to a file in rancher/dashboard, so its size is
+      unknown.
+    unresolvedDescription: >-
+      Shell paths that no longer resolve to a file in rancher/dashboard. Each is
+      either a stale import, a path that was renamed, or something private that
+      was never part of the public API.
+    tabs:
+      totals: Per Extension
+      shell: Shell Paths
+      components: Components Paths
+      external: External Packages
+      unresolved: Unresolved
+      perExtension: Extension Detail
+    summary:
+      extensions: Extensions
+      files: Source files
+      shellImports: Shell imports
+      shellPaths: Unique shell paths
+      componentsImports: Components imports
+      externalPkgs: External packages
+    detail:
+      shell: '@rancher/shell imports'
+      components: '@rancher/components imports'
+      external: External packages
+    cols:
+      extension: Extension
+      version: Version
+      files: Files
+      shellImports: Shell imports
+      uniquePaths: Unique paths
+      shellBytes: Shell source
+      componentsImports: Components imports
+      componentsBytes: Components source
+      external: External
+      internal: Internal
+      path: Path
+      shellPath: Shell path
+      componentsPath: Components path
+      package: Package
+      usedBy: Used by
+      totalImports: Total imports
+      imports: Imports
+      sourceSize: Source size
+      specifiers: Imported names
+
+  bundleAnalysis:
+    title: Bundle Analysis
+    description: >-
+      What each official extension actually ships, read from the built assets
+      published on its gh-pages branch.
+    empty: No data. Press Refresh to run the analysis.
+    notBuilt: >-
+      This analysis has not been run yet. Press Refresh to read the published
+      bundles. The result is saved, so later visits load it without
+      re-downloading.
+    refreshCost: >-
+      Downloads up to 98 MB of source maps from gh-pages. Takes several minutes.
+    sourceNote: >-
+      Bundle size is total minified JS across all code-split chunks. Source size
+      is pre-minification bytes read from source maps — use it for relative
+      comparison, not as an absolute.
+    sourceSizeHint: >-
+      Pre-minification bytes, merged across every chunk.
+    notPublished: Not published
+    pluginDir: Plugin directory
+    sourceMaps: Source maps
+    selectExtension: Extension
+    noLeaks: No extension is bundling code the host already provides.
+    leaksDescription: >-
+      @rancher/shell and @rancher/components are provided by the host at
+      runtime and must be externalized. Anything listed here is shipping a
+      second copy of code that is already loaded.
+    tabs:
+      overview: Overview
+      leaks: Externalization
+      perExtension: Extension Detail
+    summary:
+      published: Published bundles
+      totalBytes: Total shipped JS
+      largest: Largest bundle
+      leaking: Extensions with leaks
+    detail:
+      chunks: Chunks
+      byCategory: By category
+      byPackage: By package
+      leaked: Should have been external
+    warn:
+      shell: >-
+        @rancher/shell is bundled — {count} file(s). The host provides it at
+        runtime, so this is a second copy.
+      components: >-
+        @rancher/components is bundled — {count} file(s). The host provides it
+        at runtime, so this is a second copy.
+      host: 'Host-provided packages found in the bundle: {pkgs}'
+    category:
+      shell: '@rancher/shell (should be external)'
+      components: '@rancher/components (should be external)'
+      host-provided: Host-provided (should be external)
+      extension-code: Extension own code
+      external-lib: Bundled external library
+      externalized: Externalized
+      webpack-runtime: Webpack runtime
+    cols:
+      extension: Extension
+      version: Version
+      chunks: Chunks
+      chunk: Chunk
+      bundleSize: Bundle size
+      size: Size
+      ownCode: Own code
+      externalLibs: External libs
+      shellLeak: Shell bundled?
+      componentsLeak: Components bundled?
+      category: Category
+      package: Package
+      sourceSize: Source size
+      files: Files
 
   links:
     title: Important Links

@@ -76,6 +76,18 @@ export interface GhRepo {
 export interface GhRelease {
   id: number;
   tag_name: string;
+  draft?: boolean;
+  prerelease?: boolean;
+}
+
+export interface GhTag {
+  name: string;
+  commit: { sha: string };
+}
+
+export interface GhBranch {
+  name: string;
+  commit: { sha: string };
 }
 
 export interface GhCodeSearchItem {
@@ -86,6 +98,40 @@ export interface GhCodeSearchItem {
 export interface GhCodeSearchResponse {
   total_count: number;
   items: GhCodeSearchItem[];
+}
+
+/** One blob or subtree in a recursive tree listing. */
+export interface GhTreeEntry {
+  path: string;
+  type: 'blob' | 'tree' | 'commit';
+  /** Bytes, present on blobs only */
+  size?: number;
+}
+
+/**
+ * A whole repo tree in one response.
+ *
+ * `truncated` is the catch: GitHub caps the listing, and a repo big enough to
+ * hit that cap returns a partial tree with no other indication. Callers have to
+ * check it rather than assume a path's absence means the file is absent.
+ */
+export interface GhTree {
+  sha: string;
+  truncated: boolean;
+  tree: GhTreeEntry[];
+}
+
+/** One entry from the contents API when the path is a directory. */
+export interface GhContentEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'dir' | 'symlink' | 'submodule';
+  size?: number;
+}
+
+/** Shape of rancher/ui-plugin-charts `manifest.json` */
+export interface Manifest {
+  extensions: Record<string, { repo: string; branch: string; versions: string[] }>;
 }
 
 /** A parsed `package.json` — only the dependency maps matter to us. */

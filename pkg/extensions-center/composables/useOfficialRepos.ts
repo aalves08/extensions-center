@@ -1,19 +1,15 @@
 import { ref, Ref } from 'vue';
 
-import { GhRepo, PackageJson } from '../types/github';
+import {
+  OFFICIAL_MANIFEST_PATH as MANIFEST_PATH,
+  OFFICIAL_MANIFEST_REPO as MANIFEST_REPO
+} from '../config/constants';
+import { GhRepo, Manifest, PackageJson } from '../types/github';
 import { RancherStore } from '../types/rancher';
 import { OfficialRepo } from '../types/repos';
 import { parseHelmIndexVersions } from '../utils/helmIndex';
 import { dependencyVersion, latestStableVersion } from '../utils/version';
 import { useGitHubApi, describeGitHubError } from './useGitHubApi';
-
-/** Shape of rancher/ui-plugin-charts `manifest.json` */
-interface Manifest {
-  extensions: Record<string, { repo: string; branch: string; versions: string[] }>;
-}
-
-const MANIFEST_REPO = 'rancher/ui-plugin-charts';
-const MANIFEST_PATH = 'manifest.json';
 
 /** The Helm index Rancher actually serves, as opposed to the build input. */
 const OFFICIAL_INDEX_PATH = 'index.yaml';

@@ -1,4 +1,5 @@
 import { GITHUB_API } from '../config/constants';
+import { GhTree } from '../types/github';
 import { RancherStore, errorMessage, storeErrorStatus } from '../types/rancher';
 import { useExtensionConfig } from './useExtensionConfig';
 
@@ -214,8 +215,53 @@ export function useGitHubApi(store: RancherStore) {
     }
   };
 
+  /**
+   * Every file in a repo at a ref, with each blob's size, in one request.
+   *
+   * This exists for the import analysis, which needs the byte size of a few
+   * hundred files in rancher/dashboard. Asking for them one at a time is ~1,000
+   * requests once candidate extensions are tried; the recursive tree is a single
+   * 1.1MB response that answers all of them from a map.
+   *
+   * Check `truncated` on the result. rancher/dashboard currently returns just
+   * under 4,000 blobs and is nowhere near the cap, but a caller that ignores the
+   * flag would silently report every path as unresolved if that ever changed.
+   */
+  const getTree = (repo: string, ref: string): Promise<GhTree> => {
+    return get<GhTree>(`/repos/${ repo }/git/trees/${ ref }`, { recursive: '1' });
+  };
+
+  /**
+   * A file straight off the raw CDN, bypassing the REST API entirely.
+   *
+   * The analysis rebuilds download well over a thousand files — every source
+   * file of every official extension, and up to 98MB of source maps. Through the
+   * contents API that would be a thousand requests against a 5,000/hour budget
+   * shared with the rest of the dashboard.
+   *
+   * `raw.githubusercontent.com` serves the same bytes with
+   * `access-control-allow-origin: *` and sends no `x-ratelimit` headers at all,
+   * so it does not draw on that budget. It stays deliberately unauthenticated:
+   * an `Authorization` header would make this a non-simple request and trigger a
+   * CORS preflight on every single file. That does mean private repos are out of
+   * reach here, which is fine — everything analysed is public.
+   */
+  const getRawText = async(repo: string, ref: string, path: string): Promise<string | null> => {
+    const res = await fetch(`https://raw.githubusercontent.com/${ repo }/${ ref }/${ path }`);
+
+    if (res.status === 404) {
+      return null;
+    }
+
+    if (!res.ok) {
+      throw new GitHubApiError(res.statusText, res.status);
+    }
+
+    return res.text();
+  };
+
   return {
-    get, getFile, getJsonFile
+    get, getFile, getJsonFile, getTree, getRawText
   };
 }
 
