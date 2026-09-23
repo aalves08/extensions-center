@@ -50,6 +50,21 @@ const pages: ProductChild[] = [
     component: () => import('./pages/NpmMetrics.vue'),
     sideMenu:  { weight: 60 },
   },
+  // The two analysis pages sit together and in this order deliberately: imports
+  // describe what extensions ask for, bundles what they actually ship, and
+  // reading the first makes the second easier to interpret.
+  {
+    name:      'import-analysis',
+    labelKey:  'extensionsCenter.nav.importAnalysis',
+    component: () => import('./pages/ImportAnalysis.vue'),
+    sideMenu:  { weight: 55 },
+  },
+  {
+    name:      'bundle-analysis',
+    labelKey:  'extensionsCenter.nav.bundleAnalysis',
+    component: () => import('./pages/BundleAnalysis.vue'),
+    sideMenu:  { weight: 50 },
+  },
   {
     name:      'settings',
     labelKey:  'extensionsCenter.nav.settings',

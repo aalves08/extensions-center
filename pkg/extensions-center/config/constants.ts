@@ -35,6 +35,8 @@ export const ROUTES = {
   COMPAT_TEST_DETAIL:   `${ PRODUCT_ROUTE_NAME }-c-cluster-compat-tests-detail`,
   KNOWN_REPOS:          `${ PRODUCT_ROUTE_NAME }-c-cluster-known-repos`,
   NPM_METRICS:          `${ PRODUCT_ROUTE_NAME }-c-cluster-npm-metrics`,
+  IMPORT_ANALYSIS:      `${ PRODUCT_ROUTE_NAME }-c-cluster-import-analysis`,
+  BUNDLE_ANALYSIS:      `${ PRODUCT_ROUTE_NAME }-c-cluster-bundle-analysis`,
   SETTINGS:             `${ PRODUCT_ROUTE_NAME }-c-cluster-settings`,
 } as const;
 
@@ -42,6 +44,8 @@ export const ROUTES = {
 export const CONFIG_NAMESPACE = 'cattle-system';
 export const CONFIG_SECRET_NAME = 'extensions-center-config';
 export const KNOWN_REPOS_CONFIGMAP_NAME = 'extensions-center-known-repos';
+export const IMPORT_ANALYSIS_CONFIGMAP_NAME = 'extensions-center-import-analysis';
+export const BUNDLE_ANALYSIS_CONFIGMAP_NAME = 'extensions-center-bundle-analysis';
 
 export const CONFIG_SECRET_ID = `${ CONFIG_NAMESPACE }/${ CONFIG_SECRET_NAME }`;
 export const KNOWN_REPOS_CONFIGMAP_ID = `${ CONFIG_NAMESPACE }/${ KNOWN_REPOS_CONFIGMAP_NAME }`;
@@ -91,6 +95,17 @@ export const COMPAT_TESTS_FILE = 'extension-compatibility-test.yml';
 /** Official extensions manifest */
 export const OFFICIAL_MANIFEST_URL =
   'https://raw.githubusercontent.com/rancher/ui-plugin-charts/main/manifest.json';
+
+/** The same manifest, as repo and path, for callers that go through the API */
+export const OFFICIAL_MANIFEST_REPO = 'rancher/ui-plugin-charts';
+export const OFFICIAL_MANIFEST_PATH = 'manifest.json';
+
+/** Branch of rancher/dashboard that import paths are resolved against */
+export const DASHBOARD_REPO = 'rancher/dashboard';
+export const DASHBOARD_BRANCH = 'master';
+
+/** Branch every extension publishes its built plugin assets to */
+export const PUBLISH_BRANCH = 'gh-pages';
 
 /** npm packages tracked on the metrics page */
 export const TRACKED_PACKAGES = ['@rancher/shell', '@rancher/components'] as const;
@@ -178,3 +193,21 @@ export const KNOWN_REPOS_TTL_DAYS = 30;
  * document-level `degraded` flag that went with it.
  */
 export const KNOWN_REPOS_CACHE_VERSION = 2;
+
+/**
+ * Cache versions for the two analysis documents.
+ *
+ * Same contract as `KNOWN_REPOS_CACHE_VERSION`: bump when the document shape
+ * changes and the stored copy is discarded rather than half-read.
+ */
+export const IMPORT_ANALYSIS_CACHE_VERSION = 1;
+export const BUNDLE_ANALYSIS_CACHE_VERSION = 1;
+
+/**
+ * Days before an analysis document is called stale.
+ *
+ * Shorter than the known-repos TTL because these track released versions, and a
+ * new extension release lands often enough that a month-old reading is likely
+ * to be describing versions nobody is running.
+ */
+export const ANALYSIS_TTL_DAYS = 14;
