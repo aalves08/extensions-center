@@ -50,6 +50,18 @@ export default defineComponent({
     },
 
     /**
+     * Drop the refresh button, keeping the timestamp.
+     *
+     * For a section that already owns a refresh of its own further down the
+     * page. Two buttons that do the same thing is worse than one, and the
+     * header is the one a reader is least likely to connect to the content.
+     */
+    hideRefresh: {
+      type:    Boolean,
+      default: false,
+    },
+
+    /**
      * Caption under the refresh button for tables that are expensive to refresh.
      *
      * Most tables here re-fetch a page of GitHub data and cost nothing but
@@ -111,6 +123,7 @@ export default defineComponent({
       <div class="controls-row">
         <span class="refreshed text-muted">{{ refreshedLabel }}</span>
         <AsyncButton
+          v-if="!hideRefresh"
           mode="refresh"
           size="sm"
           :action-label="t('extensionsCenter.common.refresh')"

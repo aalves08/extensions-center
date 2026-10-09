@@ -2,6 +2,8 @@
  * Shared constants for the Extensions Center extension.
  */
 
+import { SecurityTarget } from '../types/security';
+
 /** Product name, as registered with `addProduct` */
 export const PRODUCT_NAME = 'extensions-center';
 
@@ -37,6 +39,7 @@ export const ROUTES = {
   NPM_METRICS:          `${ PRODUCT_ROUTE_NAME }-c-cluster-npm-metrics`,
   IMPORT_ANALYSIS:      `${ PRODUCT_ROUTE_NAME }-c-cluster-import-analysis`,
   BUNDLE_ANALYSIS:      `${ PRODUCT_ROUTE_NAME }-c-cluster-bundle-analysis`,
+  SECURITY:             `${ PRODUCT_ROUTE_NAME }-c-cluster-security`,
   SETTINGS:             `${ PRODUCT_ROUTE_NAME }-c-cluster-settings`,
 } as const;
 
@@ -110,8 +113,118 @@ export const PUBLISH_BRANCH = 'gh-pages';
 /** npm packages tracked on the metrics page */
 export const TRACKED_PACKAGES = ['@rancher/shell', '@rancher/components'] as const;
 
+/**
+ * The repos the Security page always shows, on top of every official extension.
+ *
+ * These three are not extensions themselves — they are the catalogue, the
+ * worked example and the partner index — so they are not in `manifest.json`
+ * and have to be named here. Everything else on that page comes from the
+ * manifest, so a new official extension gets a tab with no code change.
+ */
+export const SECURITY_FIXED_REPOS = [
+  'rancher/ui-plugin-charts',
+  'rancher/ui-plugin-examples',
+  'rancher/partner-extensions',
+] as const;
+
+/**
+ * The two published NPM packages, as tabs on the Security page.
+ *
+ * Neither has a repository of its own — both are directories inside
+ * `rancher/dashboard` — so neither can be a plain repo target. Each is a slice
+ * of one monorepo's alert list, and the two slices are not cut the same way.
+ *
+ * `@rancher/shell` has its own lockfile. Dependabot records the manifest every
+ * alert was raised against, so `shell/yarn.lock` plus `shell/package.json`
+ * yields exactly the shell's dependency tree and nothing else — as accurate as
+ * a dedicated repo would be, and 304 alerts deep, so the chart has real
+ * history rather than a stub.
+ *
+ * `@rancher/components` is the awkward one. It has a `package.json` Dependabot
+ * files direct-dependency alerts against, and it had a `yarn.lock` until 2022,
+ * so those two manifests are exact as far as they go. What they cannot see is
+ * anything transitive since the lockfile went away: those resolve through the
+ * workspace root and land in the root `yarn.lock` with the entire dashboard,
+ * where no manifest path separates them. The `shared` rule picks them back out
+ * by name, which recovers its direct dependencies and still cannot recover
+ * transitive ones — which is what the tab says on its face.
+ *
+ * Declared means `dependencies` and `peerDependencies`, not `devDependencies`:
+ * those are the ones a consumer actually installs, and the package shares most
+ * of its build-time tooling with the dashboard, so counting those would charge
+ * the whole monorepo's toolchain to this tab.
+ */
+export const SECURITY_NPM_TARGETS: SecurityTarget[] = [
+  {
+    id:    'rancher-shell',
+    repo:  DASHBOARD_REPO,
+    label: '@rancher/shell',
+    fixed: true,
+    scope: {
+      ownManifests: ['shell/yarn.lock', 'shell/package.json'],
+      noteKey:      'extensionsCenter.security.scopeNote.shell',
+    },
+  },
+  {
+    id:    'rancher-components',
+    repo:  DASHBOARD_REPO,
+    label: '@rancher/components',
+    fixed: true,
+    scope: {
+      ownManifests: ['pkg/rancher-components/yarn.lock', 'pkg/rancher-components/package.json'],
+      shared:       {
+        manifests:  ['yarn.lock', 'package.json'],
+        declaredBy: 'pkg/rancher-components/package.json',
+      },
+      noteKey: 'extensionsCenter.security.scopeNote.components',
+    },
+  },
+];
+
+/**
+ * OSV.dev, used for repos whose Dependabot alerts the token cannot read.
+ *
+ * Called straight from the browser: it answers a preflight with
+ * `access-control-allow-origin` for any origin and needs no credential, so
+ * unlike GitHub code search it does not have to go through Rancher's proxy.
+ */
+export const OSV_API = 'https://api.osv.dev';
+
+/** OSV caps a `querybatch` body, and 100 is the size the docs use. */
+export const OSV_BATCH_SIZE = 100;
+
+/**
+ * In-flight requests when reading one repo's vulnerabilities.
+ *
+ * Measured against the heaviest repo (2,230 packages, 225 distinct advisories):
+ * serial takes 76s, eight at a time takes 9s. Going wider stops helping — the
+ * batch phase is only ~20 requests — and risks tripping OSV's rate limiting.
+ */
+export const SECURITY_CONCURRENCY = 8;
+
+/**
+ * Days per bucket in the "open alerts over time" chart.
+ *
+ * Weekly. The series is reconstructed from alert lifecycles rather than
+ * sampled, so a finer bucket is free to compute but draws noise: Dependabot
+ * opens and closes alerts in bursts when a lockfile lands.
+ */
+export const SECURITY_BUCKET_DAYS = 7;
+
 /** How many rows the dashboard summary tables show */
 export const DASHBOARD_ROW_LIMIT = 10;
+
+/**
+ * How many open PRs the dashboard checks for manifest edits.
+ *
+ * Every one of them costs a compare call, so this is a ceiling on the scan
+ * rather than a page size. `ui-plugin-charts` runs around half a dozen open
+ * PRs; 50 covers a bad week without turning a page load into a crawl.
+ */
+export const MANIFEST_PR_SCAN_LIMIT = 50;
+
+/** In-flight compares while scanning those PRs. */
+export const MANIFEST_PR_CONCURRENCY = 6;
 
 /**
  * Where Claude is called from.

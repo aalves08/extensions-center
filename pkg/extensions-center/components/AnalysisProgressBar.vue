@@ -1,7 +1,7 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
 
-import { AnalysisProgress } from '../types/analysis';
+import { AnalysisProgress, ProgressState } from '../types/analysis';
 
 /**
  * Progress for a rebuild that is going to run for minutes.
@@ -14,14 +14,32 @@ export default defineComponent({
 
   props: {
     progress: {
-      type:    Object as PropType<AnalysisProgress | null>,
+      type:    Object as PropType<ProgressState | null>,
       default: null,
+    },
+
+    /**
+     * Translation key naming the job, for single-phase work.
+     *
+     * The two analysis rebuilds move through named phases and label themselves
+     * from `progress.phase`. A job that only ever does one thing has no phase
+     * to report, so it names itself here instead.
+     */
+    titleKey: {
+      type:    String,
+      default: '',
     },
   },
 
   computed: {
     phaseLabel(): string {
-      return this.t(`extensionsCenter.analysis.phase.${ this.progress?.phase }`);
+      const phase = (this.progress as AnalysisProgress | null)?.phase;
+
+      if (phase) {
+        return this.t(`extensionsCenter.analysis.phase.${ phase }`);
+      }
+
+      return this.titleKey ? this.t(this.titleKey) : '';
     },
 
     /**

@@ -158,6 +158,54 @@ export function useGitHubApi(store: RancherStore) {
   };
 
   /**
+   * GET every page of a list endpoint, following `Link: rel="next"`.
+   *
+   * `get` parses the body and throws the headers away, which is fine for the
+   * single-page calls everything else makes. Dependabot alerts cannot work
+   * that way: a repo can hold several hundred, and the endpoint paginates by
+   * opaque cursor rather than by page number, so the only way to the next page
+   * is the URL GitHub hands back in the Link header.
+   *
+   * `maxPages` is a guard, not a budget — a repo that somehow kept paginating
+   * forever should stop rather than hang the tab.
+   */
+  const getPaged = async<T>(path: string, params?: Record<string, string | number>, maxPages = 50): Promise<T[]> => {
+    const first = new URL(path.startsWith('http') ? path : `${ GITHUB_API }${ path }`);
+
+    Object.entries(params || {}).forEach(([k, v]) => first.searchParams.set(k, String(v)));
+
+    const out: T[] = [];
+    let next: string | null = first.toString();
+    let pages = 0;
+
+    while (next && pages < maxPages) {
+      const res: Response = await fetch(next, { headers: await headers() });
+
+      if (!res.ok) {
+        const remaining = res.headers.get('x-ratelimit-remaining');
+        const reset = res.headers.get('x-ratelimit-reset');
+        const rateLimited = (res.status === 403 || res.status === 429) && remaining === '0';
+
+        let detail = res.statusText;
+
+        try {
+          detail = (await res.json())?.message || detail;
+        } catch {
+          // Not JSON — the status text is the best we have.
+        }
+
+        throw new GitHubApiError(detail, res.status, rateLimited, reset ? Number(reset) : null);
+      }
+
+      out.push(...(await res.json() as T[]));
+      next = nextLink(res.headers.get('link'));
+      pages++;
+    }
+
+    return out;
+  };
+
+  /**
    * GET a raw file from a repo at a given ref, returning null when it is absent.
    *
    * Uses the contents API rather than raw.githubusercontent.com so the request
@@ -261,8 +309,27 @@ export function useGitHubApi(store: RancherStore) {
   };
 
   return {
-    get, getFile, getJsonFile, getTree, getRawText
+    get, getPaged, getFile, getJsonFile, getTree, getRawText
   };
+}
+
+/**
+ * The `rel="next"` URL out of a Link header, or null on the last page.
+ *
+ * GitHub sends `<url>; rel="next", <url>; rel="last"`. Parsed rather than
+ * reconstructed because the Dependabot cursor is opaque — there is no page
+ * number to increment.
+ */
+function nextLink(header: string | null): string | null {
+  for (const part of (header || '').split(',')) {
+    const match = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return null;
 }
 
 /** Turn any thrown error into a message we can put in a Banner. */

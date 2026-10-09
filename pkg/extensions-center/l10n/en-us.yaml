@@ -3,13 +3,14 @@ extensionsCenter:
     label: Extensions Center
 
   nav:
-    dashboard: Dashboard
+    dashboard: Overview
     workflowTests: Workflow Tests
     compatTests: Compatibility Tests
     knownRepos: Known Extensions
     npmMetrics: NPM Metrics
     importAnalysis: Import Analysis
     bundleAnalysis: Bundle Analysis
+    security: Security
     settings: Settings
 
   common:
@@ -55,6 +56,20 @@ extensionsCenter:
       permission to create one, so rebuilding the known extensions list will
       fail until a cluster administrator adds it.
     proxyError: 'Could not set up the Rancher proxy for api.github.com: {message}'
+    # Kept to one short line each: there is one banner per open PR, and they sit
+    # above the tables.
+    manifestPr:
+      # Quoted: the colons would otherwise read as YAML mapping syntax.
+      prefix: 'Official ext sync request :::'
+      view: View PR
+      draft: '(draft)'
+      noChange: edits manifest.json
+      more: 'and {count} more'
+      change:
+        added: 'adds {extension} {versions}'
+        dropped: 'drops {extension}'
+        newVersion: '{extension} +{versions}'
+        removedVersion: '{extension} -{versions}'
 
   workflowTests:
     title: Workflow Test Runs
@@ -412,3 +427,128 @@ extensionsCenter:
       You do not have permission to manage Secrets in the {namespace} namespace.
       Ask a cluster administrator to configure this extension.
     leaveBlank: Leave blank to keep the current value.
+
+  security:
+    title: Security
+    description: >-
+      Known vulnerabilities in the extension catalogue repos, the two published
+      NPM packages and every official extension, and how those counts have
+      moved over time.
+    allRepos: All repos
+    loading: Reading vulnerabilities…
+    empty: No known vulnerabilities for the current filters.
+    noPatch: No patch
+    manifestFailed: >-
+      Could not read the official extensions manifest, so only the catalogue
+      repos are listed: {message}
+    noHistory: >-
+      No history for this repo. The chart is reconstructed from the dates
+      Dependabot records against each alert, and public dependency data carries
+      no such dates — it describes the tree as it stands today and nothing more.
+
+    severity:
+      critical: Critical
+      high: High
+      medium: Medium
+      low: Low
+
+    scope:
+      runtime: Runtime
+      development: Development
+      mixed: Mixed
+
+    relationship:
+      direct: Direct
+      transitive: Transitive
+
+    source:
+      dependabot: Dependabot
+      public: Public data
+
+    view:
+      list: List
+      chart: Over time
+
+    range:
+      label: Range
+      90: 3 months
+      182: 6 months
+      365: 1 year
+      all: All
+
+    age:
+      days: '{count} days'
+      months: '{count} months'
+      years: '{count} years'
+
+    tiles:
+      unpatched: No patch available
+      oldest: Oldest open
+
+    filters:
+      all: All
+      severity: Severity
+      scope: Scope
+      patch: Patch
+      hasPatch: Has a patch
+      noPatch: No patch available
+
+    cols:
+      package: Package
+      severity: Severity
+      advisories: Advisories
+      manifests: Manifests
+      patched: Patched in
+      scope: Scope
+      oldest: Oldest
+      repo: Repository
+      source: Source
+      total: Total
+
+    manifestCount: '{count} manifests'
+
+    detail:
+      range: 'Vulnerable: {value}'
+      patched: 'Fixed in: {value}'
+
+    publicSource:
+      title: 'Source: public data, not Dependabot'
+      detail: >-
+        The configured GitHub token cannot read the Dependabot alerts for this
+        repo, so these rows come from its public dependency graph matched
+        against the OSV advisory database. That means no dismissals are
+        honoured, nothing is deduplicated the way Dependabot does it, and there
+        is no runtime versus development split — so these counts run higher and
+        are not comparable with the counts on a Dependabot repo.
+      unresolved: >-
+        {count} dependencies were declared as a version range the dependency
+        graph never resolved. They are excluded rather than guessed at.
+
+    rollup:
+      explain: >-
+        The estate view reads all {count} repos, which takes around a minute and
+        a few hundred requests. Individual tabs are much cheaper, so this one is
+        on request rather than automatic.
+      load: Load all security data
+      loading: Loading…
+      dependabot: From Dependabot
+      publicData: From public data
+      repoCount: '{count} repos'
+      failed: 'Could not read: {repos}'
+
+    scopeNote:
+      shell: >-
+        This package lives in rancher/dashboard rather than a repo of its own.
+        Dependabot records the lockfile each alert was raised against, and
+        shell has one, so these rows are the alerts filed against
+        shell/yarn.lock and nothing else in the monorepo.
+      components: >-
+        This package lives in rancher/dashboard and no longer has a lockfile of
+        its own, so its transitive dependencies resolve through the workspace
+        root and Dependabot files them against the root yarn.lock along with
+        the whole monorepo. These rows are everything filed against
+        pkg/rancher-components, plus the root lockfile alerts for packages that
+        its package.json declares under dependencies or peerDependencies. That
+        covers its direct dependencies; anything transitive pulled in since the
+        lockfile was removed cannot be told apart from the rest of the
+        monorepo, so treat this as a floor rather than a complete picture.
