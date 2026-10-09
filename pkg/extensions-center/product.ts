@@ -8,7 +8,7 @@ const product: ProductMetadata = {
   labelKey: 'extensionsCenter.product.label',
   sideBar:  {
     weight: 100,
-    icon:   { name: 'gear' },
+    icon:   { name: 'os-management' },
   },
   appHeader: {
     hideCopyConfig:      true,
@@ -23,32 +23,12 @@ const pages: ProductChild[] = [
   {
     name:      'dashboard',
     labelKey:  'extensionsCenter.nav.dashboard',
-    component: () => import('./pages/Dashboard.vue'),
-    sideMenu:  { weight: 100 },
+    component: () => import('./pages/Dashboard.vue')
   },
   {
-    name:      'workflow-tests',
-    labelKey:  'extensionsCenter.nav.workflowTests',
-    component: () => import('./pages/WorkflowTestsList.vue'),
-    sideMenu:  { weight: 90 },
-  },
-  {
-    name:      'compat-tests',
-    labelKey:  'extensionsCenter.nav.compatTests',
-    component: () => import('./pages/CompatTestsList.vue'),
-    sideMenu:  { weight: 80 },
-  },
-  {
-    name:      'known-repos',
-    labelKey:  'extensionsCenter.nav.knownRepos',
-    component: () => import('./pages/KnownReposList.vue'),
-    sideMenu:  { weight: 70 },
-  },
-  {
-    name:      'npm-metrics',
-    labelKey:  'extensionsCenter.nav.npmMetrics',
-    component: () => import('./pages/NpmMetrics.vue'),
-    sideMenu:  { weight: 60 },
+    name:      'security',
+    labelKey:  'extensionsCenter.nav.security',
+    component: () => import('./pages/Security.vue')
   },
   // The two analysis pages sit together and in this order deliberately: imports
   // describe what extensions ask for, bundles what they actually ship, and
@@ -56,20 +36,37 @@ const pages: ProductChild[] = [
   {
     name:      'import-analysis',
     labelKey:  'extensionsCenter.nav.importAnalysis',
-    component: () => import('./pages/ImportAnalysis.vue'),
-    sideMenu:  { weight: 55 },
+    component: () => import('./pages/ImportAnalysis.vue')
   },
   {
     name:      'bundle-analysis',
     labelKey:  'extensionsCenter.nav.bundleAnalysis',
-    component: () => import('./pages/BundleAnalysis.vue'),
-    sideMenu:  { weight: 50 },
+    component: () => import('./pages/BundleAnalysis.vue')
+  },
+  {
+    name:      'workflow-tests',
+    labelKey:  'extensionsCenter.nav.workflowTests',
+    component: () => import('./pages/WorkflowTestsList.vue')
+  },
+  {
+    name:      'compat-tests',
+    labelKey:  'extensionsCenter.nav.compatTests',
+    component: () => import('./pages/CompatTestsList.vue')
+  },
+  {
+    name:      'known-repos',
+    labelKey:  'extensionsCenter.nav.knownRepos',
+    component: () => import('./pages/KnownReposList.vue')
+  },
+  {
+    name:      'npm-metrics',
+    labelKey:  'extensionsCenter.nav.npmMetrics',
+    component: () => import('./pages/NpmMetrics.vue')
   },
   {
     name:      'settings',
     labelKey:  'extensionsCenter.nav.settings',
-    component: () => import('./pages/Settings.vue'),
-    sideMenu:  { weight: 10 },
+    component: () => import('./pages/Settings.vue')
   },
 ];
 

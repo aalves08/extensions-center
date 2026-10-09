@@ -185,10 +185,13 @@ export interface BundleAnalysisDoc {
  * Both rebuilds run for minutes. A spinner with no detail on a five-minute job
  * is indistinguishable from a hang, so every phase reports a count.
  */
-export interface AnalysisProgress {
-  phase: 'targets' | 'modules' | 'listing' | 'sources' | 'maps' | 'saving';
+export interface ProgressState {
   done: number;
   total: number;
-  /** Extension currently being worked on, when the phase has one */
+  /** Item currently being worked on, when the job has one */
   label?: string;
+}
+
+export interface AnalysisProgress extends ProgressState {
+  phase: 'targets' | 'modules' | 'listing' | 'sources' | 'maps' | 'saving';
 }

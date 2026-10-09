@@ -7,6 +7,7 @@ import CategorySummaryPanel from '../components/CategorySummary.vue';
 import DashboardPanel from '../components/DashboardPanel.vue';
 import KnownReposTable from '../components/KnownReposTable.vue';
 import LinksList from '../components/LinksList.vue';
+import ManifestPrBanner from '../components/ManifestPrBanner.vue';
 import OfficialReposTable from '../components/OfficialReposTable.vue';
 import RunsTable from '../components/RunsTable.vue';
 
@@ -17,6 +18,7 @@ import {
 import { EXTENSIONS_DOCS_URL } from '../config/links';
 import { useExtensionConfig } from '../composables/useExtensionConfig';
 import { useKnownRepos } from '../composables/useKnownRepos';
+import { useManifestPrs } from '../composables/useManifestPrs';
 import { useOfficialRepos } from '../composables/useOfficialRepos';
 import { useProxyEndpoint } from '../composables/useProxyEndpoint';
 import { useTestRuns } from '../composables/useTestRuns';
@@ -33,6 +35,7 @@ const workflowRuns = useTestRuns(store, { repo: WORKFLOW_TESTS_REPO, workflowFil
 const compatRuns = useTestRuns(store, { repo: COMPAT_TESTS_REPO, workflowFile: COMPAT_TESTS_FILE }, DASHBOARD_ROW_LIMIT);
 const officialRepos = useOfficialRepos(store);
 const knownRepos = useKnownRepos(store);
+const manifestPrs = useManifestPrs(store);
 const proxyEndpoint = useProxyEndpoint(store);
 
 const settingsRoute = { name: ROUTES.SETTINGS, params: { cluster: BLANK_CLUSTER } };
@@ -76,7 +79,7 @@ async function refreshAll(done?: Done) {
   // cheap catch-up on live data; the expensive table has its own button so the
   // cost is never something a user runs into sideways.
   const results = await Promise.allSettled([
-    workflowRuns.refresh(), compatRuns.refresh(), officialRepos.refresh(),
+    workflowRuns.refresh(), compatRuns.refresh(), officialRepos.refresh(), manifestPrs.load(),
   ]);
 
   done?.(results.every((r) => r.status === 'fulfilled'));
@@ -106,6 +109,18 @@ onMounted(async() => {
         {{ t('extensionsCenter.dashboard.subtitle') }}
       </p>
     </header>
+
+    <!--
+      One per open PR that edits the official manifest. Above the tables
+      because it changes how to read them: the official extensions list below
+      is the manifest as it stands on main, and these are what is about to
+      happen to it.
+    -->
+    <ManifestPrBanner
+      v-for="pr in manifestPrs.data.value"
+      :key="pr.number"
+      :pr="pr"
+    />
 
     <Banner
       v-if="!hasGithubToken"
