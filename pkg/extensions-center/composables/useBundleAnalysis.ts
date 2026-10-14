@@ -3,6 +3,8 @@ import { ref, Ref } from 'vue';
 import {
   BUNDLE_ANALYSIS_CACHE_VERSION,
   BUNDLE_ANALYSIS_CONFIGMAP_NAME,
+  DASHBOARD_BRANCH,
+  DASHBOARD_REPO,
   PUBLISH_BRANCH
 } from '../config/constants';
 import { AnalysisProgress, AnalysisTarget, BundleAnalysisDoc, ExtensionBundle } from '../types/analysis';
@@ -10,9 +12,11 @@ import { GhContentEntry } from '../types/github';
 import { RancherStore, errorMessage } from '../types/rancher';
 import { mapWithConcurrency } from '../utils/async';
 import { addSourceMap, createAccumulator, finaliseTotals } from '../utils/sourceMapStats';
+import { parseYarnLock } from '../utils/yarnLock';
 import { useAnalysisCache, isAnalysisStale } from './useAnalysisCache';
 import { resolveTargets } from './useAnalysisTargets';
 import { useGitHubApi, describeGitHubError } from './useGitHubApi';
+import { clearRepoLayoutCache } from './useRepoExtensions';
 
 /**
  * What each official extension actually ships, read from its built assets on
@@ -34,6 +38,39 @@ const MAP_CONCURRENCY = 2;
 
 export function useBundleAnalysis(store: RancherStore) {
   const api = useGitHubApi(store);
+
+  /**
+   * What shell itself declares as a dependency.
+   *
+   * Stands in for shell's import graph when deciding whether a package in a
+   * bundle got there because shell wanted it. Building the real graph would
+   * need every shell source file; this is one request, and in the only
+   * direction that matters it gives the same answer — see `bundleCause.ts`.
+   */
+  const fetchShellDeps = async(): Promise<Set<string>> => {
+    try {
+      const text = await api.getRawText(DASHBOARD_REPO, DASHBOARD_BRANCH, 'shell/package.json');
+      const pkg = JSON.parse(text || '{}') as { dependencies?: Record<string, string> };
+
+      return new Set(Object.keys(pkg.dependencies || {}));
+    } catch {
+      // Costs the cause column its precision — everything third-party falls
+      // back to `extension-dep` — and nothing else. Not worth failing a
+      // five-minute rebuild over.
+      return new Set();
+    }
+  };
+
+  /** Resolved versions for one extension, from the lockfile at its tag. */
+  const fetchLockVersions = async(target: AnalysisTarget): Promise<Map<string, string[]>> => {
+    try {
+      // Null is a 404: the repo has no lockfile at that tag, which is a real
+      // and acceptable state. Every version column for it simply stays empty.
+      return parseYarnLock(await api.getRawText(target.repo, target.ref, 'yarn.lock') || '');
+    } catch {
+      return new Map();
+    }
+  };
   const cache = useAnalysisCache<BundleAnalysisDoc>(store, {
     name:    BUNDLE_ANALYSIS_CONFIGMAP_NAME,
     version: BUNDLE_ANALYSIS_CACHE_VERSION,
@@ -67,19 +104,24 @@ export function useBundleAnalysis(store: RancherStore) {
     }
   };
 
-  const analyseExtension = async(target: AnalysisTarget): Promise<ExtensionBundle> => {
+  const analyseExtension = async(target: AnalysisTarget, shellDeps: ReadonlySet<string>): Promise<ExtensionBundle> => {
     const base: ExtensionBundle = {
       name:             target.name,
       repo:             target.repo,
       semver:           target.semver,
+      inManifest:       target.inManifest,
       pluginDir:        null,
       chunkCount:       0,
       totalBundleBytes: 0,
       chunks:           [],
       hasSourceMaps:    false,
       byCategory:       null,
+      byCause:          null,
       byPackage:        null,
       leaks:            null,
+      totalSourceBytes: 0,
+      ratio:            null,
+      shellCausedBytes: 0,
     };
 
     const dir = `extensions/${ target.name }/${ target.semver }/plugin`;
@@ -124,6 +166,10 @@ export function useBundleAnalysis(store: RancherStore) {
     }
 
     const acc = createAccumulator(target.name);
+    // Started here rather than awaited, so the lockfile comes down alongside
+    // the first source map instead of delaying it. It is a few hundred KB
+    // against tens of megabytes of maps.
+    const versions = fetchLockVersions(target);
 
     await mapWithConcurrency(mapFiles, MAP_CONCURRENCY, async(file) => {
       const text = await api.getRawText(target.repo, PUBLISH_BRANCH, `${ dir }/${ file.name }`)
@@ -140,13 +186,20 @@ export function useBundleAnalysis(store: RancherStore) {
       return withChunks;
     }
 
-    const totals = finaliseTotals(acc);
+    const totals = finaliseTotals(acc, { shellDeps, versions: await versions });
 
     return {
       ...withChunks,
-      byCategory: totals.byCategory,
-      byPackage:  totals.byPackage,
-      leaks:      totals.leaks,
+      byCategory:       totals.byCategory,
+      byCause:          totals.byCause,
+      byPackage:        totals.byPackage,
+      leaks:            totals.leaks,
+      totalSourceBytes: totals.totalSourceBytes,
+      // Guarded against zero rather than assumed safe: a bundle whose maps all
+      // came without `sourcesContent` reads every file as 0 bytes, and the
+      // division would hand every table on the page an Infinity.
+      ratio:            totals.totalSourceBytes > 0 ? withChunks.totalBundleBytes / totals.totalSourceBytes : null,
+      shellCausedBytes: totals.shellCausedBytes,
     };
   };
 
@@ -164,7 +217,13 @@ export function useBundleAnalysis(store: RancherStore) {
     };
 
     try {
+      // An explicit refresh re-reads each repo's `pkg/` layout too. A sibling
+      // extension added since the last rebuild should appear without needing a
+      // browser reload.
+      clearRepoLayoutCache();
+
       const targets = await resolveTargets(store);
+      const shellDeps = await fetchShellDeps();
 
       let done = 0;
 
@@ -177,7 +236,7 @@ export function useBundleAnalysis(store: RancherStore) {
           phase: 'maps', done, total: targets.length, label: target.name
         };
 
-        const result = await analyseExtension(target);
+        const result = await analyseExtension(target, shellDeps);
 
         done++;
         progress.value = {

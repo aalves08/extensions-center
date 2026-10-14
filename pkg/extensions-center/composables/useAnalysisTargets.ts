@@ -1,9 +1,13 @@
 import { OFFICIAL_MANIFEST_PATH, OFFICIAL_MANIFEST_REPO } from '../config/constants';
 import { AnalysisTarget } from '../types/analysis';
-import { GhBranch, GhRelease, GhTag, Manifest } from '../types/github';
+import {
+  GhBranch, GhRelease, GhRepo, GhTag, Manifest
+} from '../types/github';
 import { RancherStore } from '../types/rancher';
 import { mapWithConcurrency } from '../utils/async';
+import { semverFromTag, tagBelongsTo } from '../utils/extensionTags';
 import { useGitHubApi } from './useGitHubApi';
+import { RepoExtension, RepoLayout, repoLayout } from './useRepoExtensions';
 
 /**
  * Deciding *which* version of each official extension both analyses look at.
@@ -11,26 +15,39 @@ import { useGitHubApi } from './useGitHubApi';
  * Shared because the two pages have to agree. If imports read kubewarden 4.2.1
  * and bundles read 4.1.0, every comparison between the source an extension asks
  * for and the bundle it ships would be comparing two different extensions.
- */
-
-/**
- * Bare semver out of a release tag.
  *
- * Extension repos tag three different ways: `v1.9.0`, `kubewarden-4.2.1` and
- * `observability@2.4.0`. The name prefix has to go before the `v` does, and the
- * `v` is only stripped when a digit follows it — the Node script this is ported
- * from used a plain `/^v/`, which is why its published report contains
- * `irtual-clusters-1.2.0` and `ulnerability-scanner-0.9.0`.
+ * The unit here is the extension, not the repo. Those were the same thing until
+ * `neuvector/security-ui-exts` arrived with four `pkg/` directories publishing
+ * on one interleaved release stream — see `utils/extensionTags.ts` for what
+ * that broke and `useRepoExtensions.ts` for how the repo is read.
  */
-export function semverFromTag(extName: string, tag: string): string {
-  const escaped = extName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  return tag
-    .replace(new RegExp(`^${ escaped }[-@]`, 'i'), '')
-    .replace(/^v(?=\d)/, '');
+export { semverFromTag };
+
+/** Repos read at once. Each costs a directory listing plus releases and tags. */
+const REPO_CONCURRENCY = 3;
+
+/** Enough releases and tags to find one belonging to each extension in a repo. */
+const PER_PAGE = 50;
+
+/** The repo's own `pkg/` dirs minus this one: what makes a bare tag ambiguous. */
+function siblingCount(layout: RepoLayout): number {
+  return Math.max(layout.extensions.length - 1, 0);
 }
 
-/** Latest version of every extension in the official manifest. */
+/**
+ * Where this extension's shipped source lives.
+ *
+ * Shared roots are appended rather than attributed to the repo, because the
+ * webpack alias that pulls `pkg/common` into a build copies it into each
+ * sibling's bundle — so every sibling genuinely ships those files and inherits
+ * the shell imports inside them.
+ */
+function sourceRoots(ext: RepoExtension, layout: RepoLayout): string[] {
+  return [ext.root, ...layout.sharedRoots].filter((r) => !!r);
+}
+
+/** Latest version of every extension found in the official repos. */
 export async function resolveTargets(store: RancherStore): Promise<AnalysisTarget[]> {
   const api = useGitHubApi(store);
   const manifest = await api.getJsonFile<Manifest>(OFFICIAL_MANIFEST_REPO, OFFICIAL_MANIFEST_PATH);
@@ -39,64 +56,117 @@ export async function resolveTargets(store: RancherStore): Promise<AnalysisTarge
     throw new Error(`Could not read ${ OFFICIAL_MANIFEST_PATH } from ${ OFFICIAL_MANIFEST_REPO }.`);
   }
 
-  const entries = Object.entries(manifest.extensions);
+  // Grouped by repo before anything is fetched: releases and tags are one list
+  // per repo however many extensions come out of it, so asking per extension
+  // would issue the same two calls twice and still have to tell the results
+  // apart afterwards.
+  const byRepo = new Map<string, string[]>();
 
-  const resolved = await mapWithConcurrency(entries, 3, async([name, entry]): Promise<AnalysisTarget | null> => {
-    const repo = entry.repo;
-
-    // Releases first: they are the only source that distinguishes a finished
-    // release from a prerelease, which matters because several of these repos
-    // tag release candidates continuously.
-    const releases = await api.get<GhRelease[]>(`/repos/${ repo }/releases`, { per_page: 50 });
-    const stable = releases.find((r) => !r.draft && !r.prerelease);
-
-    if (stable) {
-      return {
-        name,
-        repo,
-        tag:    stable.tag_name,
-        semver: semverFromTag(name, stable.tag_name),
-        ref:    stable.tag_name,
-        source: 'release',
-      };
+  for (const [name, entry] of Object.entries(manifest.extensions)) {
+    if (!entry?.repo) {
+      continue;
     }
 
-    // Some repos tag without ever cutting a GitHub release.
-    const tags = await api.get<GhTag[]>(`/repos/${ repo }/tags`, { per_page: 50 });
+    const names = byRepo.get(entry.repo) || [];
 
-    if (tags.length) {
-      return {
-        name,
+    names.push(name);
+    byRepo.set(entry.repo, names);
+  }
+
+  const perRepo = await mapWithConcurrency([...byRepo.entries()], REPO_CONCURRENCY, async([repo, manifestNames]) => {
+    const [layout, releases, tags] = await Promise.all([
+      repoLayout(store, repo, manifestNames),
+      // Releases are the only source that distinguishes a finished release from
+      // a prerelease, which matters because several of these repos tag release
+      // candidates continuously. Deliberately not caught: a failure here is a
+      // rate limit or a bad token, and reporting that is worth more than a
+      // table quietly built from branch heads.
+      api.get<GhRelease[]>(`/repos/${ repo }/releases`, { per_page: PER_PAGE }),
+      api.get<GhTag[]>(`/repos/${ repo }/tags`, { per_page: PER_PAGE }),
+    ]);
+
+    const siblings = siblingCount(layout);
+    const stable = releases.filter((r) => !r.draft && !r.prerelease);
+
+    /**
+     * The default branch's head, read at most once per repo and only if
+     * something needs it.
+     *
+     * Deliberately not the manifest's `branch`: that names where the team
+     * *publishes* (`gh-pages` for all twelve), and reading built output as if
+     * it were source would produce a target with no `pkg/` in it at all.
+     */
+    let head: Promise<GhBranch | null> | null = null;
+    const branchHead = () => {
+      head = head || api.get<GhRepo>(`/repos/${ repo }`)
+        .then((r) => api.get<GhBranch>(`/repos/${ repo }/branches/${ r.default_branch }`))
+        .catch(() => null);
+
+      return head;
+    };
+
+    return Promise.all(layout.extensions.map(async(ext): Promise<AnalysisTarget | null> => {
+      const mine = (tag: string) => tagBelongsTo(ext.name, tag, siblings);
+
+      const common = {
+        name:        ext.name,
         repo,
-        tag:    tags[0].name,
-        semver: semverFromTag(name, tags[0].name),
-        ref:    tags[0].commit.sha,
-        source: 'tag',
+        inManifest:  ext.inManifest,
+        sourceRoots: sourceRoots(ext, layout),
       };
-    }
 
-    // Nothing tagged at all — read the branch head and let the UI say so.
-    const branch = entry.branch || 'main';
+      // A release naming this extension, then — only where no sibling could
+      // have produced it — the newest release in the repo. That second step is
+      // what every single-extension row has always used, kept so a repo with
+      // an unusual tag scheme does not regress into reading its branch head.
+      const release = stable.find((r) => mine(r.tag_name)) ||
+        (siblings === 0 ? stable[0] : undefined);
 
-    try {
-      const head = await api.get<GhBranch>(`/repos/${ repo }/branches/${ branch }`);
+      if (release) {
+        return {
+          ...common,
+          tag:    release.tag_name,
+          semver: semverFromTag(ext.name, release.tag_name),
+          ref:    release.tag_name,
+          source: 'release',
+        };
+      }
+
+      // Some repos tag without ever cutting a GitHub release.
+      const tag = tags.find((t) => mine(t.name)) || (siblings === 0 ? tags[0] : undefined);
+
+      if (tag) {
+        return {
+          ...common,
+          tag:    tag.name,
+          semver: semverFromTag(ext.name, tag.name),
+          ref:    tag.commit.sha,
+          source: 'tag',
+        };
+      }
+
+      // Nothing tagged this extension at all — read the branch head and let the
+      // UI say so.
+      const branch = await branchHead();
+
+      if (!branch) {
+        // An extension we cannot resolve a ref for is dropped rather than
+        // carried as a row that can never have numbers in it.
+        return null;
+      }
 
       return {
-        name,
-        repo,
-        tag:    head.name,
-        semver: head.name,
-        ref:    head.commit.sha,
+        ...common,
+        tag:    branch.name,
+        semver: branch.name,
+        ref:    branch.commit.sha,
         source: 'branch',
       };
-    } catch {
-      // An extension we cannot resolve a ref for is dropped rather than carried
-      // as a row that can never have numbers in it.
-      return null;
-    }
+    }));
   });
 
-  return resolved
+  return perRepo
+    .flat()
     .filter((t): t is AnalysisTarget => t !== null)
     .sort((a, b) => a.name.localeCompare(b.name));
 }

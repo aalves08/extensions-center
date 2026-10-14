@@ -2,6 +2,7 @@
 import { defineComponent, PropType } from 'vue';
 
 import { CategorySummary, RepoOrigin } from '../types/repos';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * Total extension count plus the SUSE/external split.
@@ -11,6 +12,8 @@ import { CategorySummary, RepoOrigin } from '../types/repos';
  */
 export default defineComponent({
   name: 'CategorySummaryPanel',
+
+  mixins: [i18nMixin],
 
   props: {
     summary: {

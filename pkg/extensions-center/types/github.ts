@@ -141,3 +141,16 @@ export interface PackageJson {
   peerDependencies?: Record<string, string>;
   resolutions?: Record<string, string>;
 }
+
+/**
+ * The `package.json` of one `pkg/<dir>` inside an extension repo.
+ *
+ * `rancher` is what separates an installable extension from a shared library:
+ * the scaffolder puts the catalogue annotations there, and nothing that is not
+ * an extension has one. `private` is the other half — `pkg/common` in
+ * `neuvector/security-ui-exts` sets it and says so in its description.
+ */
+export interface ExtensionPackageJson {
+  private?: boolean;
+  rancher?: { annotations?: Record<string, string> };
+}

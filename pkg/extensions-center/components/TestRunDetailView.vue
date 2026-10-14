@@ -13,6 +13,7 @@ import SectionHeader from './SectionHeader.vue';
 import { BLANK_CLUSTER } from '../config/constants';
 import { useTestRunDetail } from '../composables/useTestRuns';
 import { formatDuration } from '../utils/runs';
+import { useTranslation } from '../utils/i18n';
 
 /**
  * Detail view for a single run of either suite.
@@ -20,6 +21,9 @@ import { formatDuration } from '../utils/runs';
  * Everything here comes from two GitHub calls made on mount; there is no stored
  * copy of a run, so the page is always showing what GitHub reports right now.
  */
+
+const t = useTranslation();
+
 const props = defineProps<{
   repo: string;
   titleKey: string;
@@ -50,7 +54,6 @@ const overview = computed(() => {
     return [];
   }
 
-  const t = (key: string) => store.getters['i18n/t'](key);
   const na = t('extensionsCenter.common.na');
 
   return [

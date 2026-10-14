@@ -3,12 +3,20 @@
  * and the wider set of known (mostly community) extension repos.
  */
 
-/** A repo listed in rancher/ui-plugin-charts manifest.json */
+/**
+ * One official extension.
+ *
+ * A row is an extension rather than a repo. Those were the same thing until
+ * `neuvector/security-ui-exts` arrived publishing four `pkg/` directories out
+ * of one repo, so `id` carries both halves and several rows can share `repo`.
+ */
 export interface OfficialRepo {
-  /** `owner/name` — used as the row id */
+  /** `owner/name/chart` — unique per extension, not per repo */
   id: string;
-  /** Chart name, which is also the manifest key */
+  /** Chart name: the `pkg/` directory, and the manifest key when it has one */
   name: string;
+  /** `owner/name` */
+  repo: string;
   repoUrl: string;
   /** Branch the manifest points at, usually `main` */
   headBranch: string;
@@ -26,6 +34,12 @@ export interface OfficialRepo {
    * repo whose `gh-pages` could not be read is never flagged.
    */
   outOfSync: boolean;
+  /**
+   * False for an extension found in a repo's `pkg/` but absent from
+   * `manifest.json` — built and published like its siblings, just not in the
+   * official catalogue yet. Shown and marked rather than hidden.
+   */
+  inManifest: boolean;
   /** Set when one of the version lookups failed, so the row can explain itself */
   error?: string;
 }

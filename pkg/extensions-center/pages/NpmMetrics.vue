@@ -5,6 +5,9 @@ import { Banner } from '@components/Banner';
 import DownloadChart from '../components/DownloadChart.vue';
 import SectionHeader from '../components/SectionHeader.vue';
 import { useNpmMetrics, MetricsRange } from '../composables/useNpmMetrics';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 

@@ -10,6 +10,7 @@ import { OfficialRepo } from '../types/repos';
 import { parseHelmIndexVersions } from '../utils/helmIndex';
 import { dependencyVersion, latestStableVersion } from '../utils/version';
 import { useGitHubApi, describeGitHubError } from './useGitHubApi';
+import { clearRepoLayoutCache, repoLayout } from './useRepoExtensions';
 
 /** The Helm index Rancher actually serves, as opposed to the build input. */
 const OFFICIAL_INDEX_PATH = 'index.yaml';
@@ -18,6 +19,9 @@ const OFFICIAL_INDEX_PATH = 'index.yaml';
 const DEFAULT_PUBLISH_BRANCH = 'gh-pages';
 
 type ChartVersions = Record<string, string[]>;
+
+/** The manifest entries belonging to one repo, keyed by chart name. */
+type ManifestEntries = Map<string, Manifest['extensions'][string]>;
 
 /**
  * The official extension repos, taken live from the ui-plugin-charts manifest.
@@ -35,6 +39,10 @@ type ChartVersions = Record<string, string[]>;
  * with `index.yaml` by construction and can never show a release sitting
  * unpackaged. Reading each team's `gh-pages` costs one extra call per repo and
  * is the only way that gap becomes visible.
+ *
+ * A fifth source, the repo's `pkg/` listing, decides how many rows come out of
+ * it: `neuvector/security-ui-exts` holds four extensions, and the manifest
+ * names one of them.
  */
 export function useOfficialRepos(store: RancherStore) {
   const api = useGitHubApi(store);
@@ -57,52 +65,79 @@ export function useOfficialRepos(store: RancherStore) {
     }
   };
 
-  const enrich = async(
-    name: string,
-    entry: Manifest['extensions'][string],
+  /**
+   * Every extension in one repo, as rows.
+   *
+   * Grouped rather than done per manifest entry because the three repo-level
+   * lookups — the Helm index, the repo itself, its root `package.json` — give
+   * the same answer for every extension inside it. Only the version columns
+   * differ, and those are keyed by chart name.
+   */
+  const enrichRepo = async(
+    repo: string,
+    entries: ManifestEntries,
     officialVersions: ChartVersions
-  ): Promise<OfficialRepo> => {
-    const base: OfficialRepo = {
-      id:                    entry.repo,
-      name,
-      repoUrl:               `https://github.com/${ entry.repo }`,
-      headBranch:            '',
-      shellVersion:          null,
-      componentsVersion:     null,
-      publishedVersion:      null,
-      latestOfficialVersion: latestStableVersion(officialVersions[name] || []),
-      outOfSync:             false,
-    };
+  ): Promise<OfficialRepo[]> => {
+    const manifestNames = [...entries.keys()];
+    const publishBranch = entries.values().next().value?.branch || DEFAULT_PUBLISH_BRANCH;
 
-    // The extension's own index is keyed by chart name, same as the manifest
-    // key — and a repo can publish more than one chart, so taking the highest
-    // version in the file rather than the one under `name` would be wrong.
-    const published = await helmIndex(entry.repo, entry.branch || DEFAULT_PUBLISH_BRANCH);
+    const [layout, published] = await Promise.all([
+      repoLayout(store, repo, manifestNames),
+      // The extension's own index is keyed by chart name, same as the manifest
+      // key — and a repo can publish more than one chart, so taking the highest
+      // version in the file rather than the one under `name` would be wrong.
+      helmIndex(repo, publishBranch),
+    ]);
 
-    base.publishedVersion = latestStableVersion(
-      published[name]?.length ? published[name] : (entry.versions || [])
-    );
-
-    base.outOfSync = !!base.publishedVersion &&
-      !!base.latestOfficialVersion &&
-      base.publishedVersion !== base.latestOfficialVersion;
+    let headBranch = '';
+    let shellVersion: string | null = null;
+    let componentsVersion: string | null = null;
+    let repoError: string | undefined;
 
     try {
-      const repo = await api.get<GhRepo>(`/repos/${ entry.repo }`);
+      const meta = await api.get<GhRepo>(`/repos/${ repo }`);
 
-      base.headBranch = repo.default_branch;
+      headBranch = meta.default_branch;
 
-      const pkg = await api.getJsonFile<PackageJson>(entry.repo, 'package.json', repo.default_branch);
+      const pkg = await api.getJsonFile<PackageJson>(repo, 'package.json', meta.default_branch);
 
-      base.shellVersion = dependencyVersion(pkg, '@rancher/shell');
-      base.componentsVersion = dependencyVersion(pkg, '@rancher/components');
+      shellVersion = dependencyVersion(pkg, '@rancher/shell');
+      componentsVersion = dependencyVersion(pkg, '@rancher/components');
     } catch (e) {
       // One unreachable repo (renamed, archived, private) should not blank the
-      // whole table — the row renders with what we know and says why.
-      base.error = describeGitHubError(e);
+      // whole table — its rows render with what we know and say why.
+      repoError = describeGitHubError(e);
     }
 
-    return base;
+    return layout.extensions.map((ext) => {
+      const entry = entries.get(ext.name);
+
+      const row: OfficialRepo = {
+        id:               `${ repo }/${ ext.name }`,
+        name:             ext.name,
+        repo,
+        repoUrl:          `https://github.com/${ repo }`,
+        headBranch,
+        shellVersion,
+        componentsVersion,
+        publishedVersion: latestStableVersion(
+          published[ext.name]?.length ? published[ext.name] : (entry?.versions || [])
+        ),
+        latestOfficialVersion: latestStableVersion(officialVersions[ext.name] || []),
+        outOfSync:             false,
+        inManifest:            ext.inManifest,
+        error:                 repoError,
+      };
+
+      // Both versions have to be known, which is also what keeps a discovered
+      // sibling from being flagged: the catalogue has never heard of it, so
+      // there is nothing for its published version to be out of step with.
+      row.outOfSync = !!row.publishedVersion &&
+        !!row.latestOfficialVersion &&
+        row.publishedVersion !== row.latestOfficialVersion;
+
+      return row;
+    });
   };
 
   const refresh = async(): Promise<void> => {
@@ -110,6 +145,10 @@ export function useOfficialRepos(store: RancherStore) {
     error.value = null;
 
     try {
+      // Re-read each repo's `pkg/` layout: a refresh should pick up a sibling
+      // added since the page was opened.
+      clearRepoLayoutCache();
+
       const [manifest, officialVersions] = await Promise.all([
         api.getJsonFile<Manifest>(MANIFEST_REPO, MANIFEST_PATH),
         helmIndex(MANIFEST_REPO),
@@ -119,10 +158,24 @@ export function useOfficialRepos(store: RancherStore) {
         throw new Error(`Could not read ${ MANIFEST_PATH } from ${ MANIFEST_REPO }.`);
       }
 
-      const entries = Object.entries(manifest.extensions);
-      const rows = await Promise.all(entries.map(([name, entry]) => enrich(name, entry, officialVersions)));
+      const byRepo = new Map<string, ManifestEntries>();
 
-      data.value = rows.sort((a, b) => a.name.localeCompare(b.name));
+      for (const [name, entry] of Object.entries(manifest.extensions)) {
+        if (!entry?.repo) {
+          continue;
+        }
+
+        const group = byRepo.get(entry.repo) || new Map();
+
+        group.set(name, entry);
+        byRepo.set(entry.repo, group);
+      }
+
+      const perRepo = await Promise.all(
+        [...byRepo.entries()].map(([repo, entries]) => enrichRepo(repo, entries, officialVersions))
+      );
+
+      data.value = perRepo.flat().sort((a, b) => a.name.localeCompare(b.name));
       lastRefreshed.value = new Date();
     } catch (e) {
       error.value = describeGitHubError(e);

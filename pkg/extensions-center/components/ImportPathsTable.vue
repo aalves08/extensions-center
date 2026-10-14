@@ -5,6 +5,7 @@ import SortableTable from '@shell/components/SortableTable/index.vue';
 import { AggregateImportPath } from '../types/analysis';
 import { TableHeader } from '../types/table';
 import { prettyBytes } from '../utils/bytes';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * Import paths aggregated across every extension.
@@ -15,6 +16,8 @@ import { prettyBytes } from '../utils/bytes';
  */
 export default defineComponent({
   name: 'ImportPathsTable',
+
+  mixins: [i18nMixin],
 
   components: { SortableTable },
 

@@ -9,9 +9,13 @@
  * having both.
  */
 
+import { BundleCause } from '../utils/bundleCause';
+
+export type { BundleCause };
+
 /** One extension at one released version: the unit both pipelines work on. */
 export interface AnalysisTarget {
-  /** Chart name — the manifest key, and the directory name used on gh-pages */
+  /** Chart name — the `pkg/` directory, and the directory used on gh-pages */
   name: string;
   /** `owner/name` */
   repo: string;
@@ -23,6 +27,23 @@ export interface AnalysisTarget {
   ref: string;
   /** Where the version came from, so the UI can admit when it is a guess */
   source: 'release' | 'tag' | 'branch';
+  /**
+   * False for an extension found in a repo's `pkg/` but absent from
+   * rancher/ui-plugin-charts `manifest.json`.
+   *
+   * It is built and published like its siblings; it is simply not in the
+   * official catalogue yet, which is a fact about the catalogue rather than
+   * about the extension — so it is analysed and labelled, not hidden.
+   */
+  inManifest: boolean;
+  /**
+   * Repo-relative prefixes holding the source this extension ships.
+   *
+   * More than one when the repo has shared private `pkg/` directories, which
+   * every sibling bundles a copy of. Empty when the layout could not be read,
+   * leaving the import scan to infer a root from the file tree.
+   */
+  sourceRoots: string[];
 }
 
 // ─── Import analysis ─────────────────────────────────────────────────────────
@@ -43,6 +64,8 @@ export interface ExtensionImportTotals {
   name: string;
   repo: string;
   semver: string;
+  /** See `AnalysisTarget.inManifest` — the table marks these rows */
+  inManifest: boolean;
   /** Source files that contained at least one import */
   fileCount: number;
   shell: number;
@@ -130,12 +153,31 @@ export interface BundlePackage {
   category: BundleCategory;
   bytes: number;
   files: number;
+  /** Who put it in the bundle, and therefore whose fix it is */
+  cause: BundleCause;
+  /**
+   * Versions this package resolved to in the extension's lockfile.
+   *
+   * Empty when the lockfile could not be read, or when the name is one of the
+   * synthetic ones (`webpack-runtime`, `externalized`, own code) that never
+   * appears in a lockfile. Several entries means the lockfile really did
+   * resolve it more than once.
+   */
+  versions: string[];
 }
 
 export interface BundleCategoryTotal {
   category: BundleCategory;
   bytes: number;
   files: number;
+}
+
+/** One row of the "why is this in the bundle" table. */
+export interface BundleCauseTotal {
+  cause: BundleCause;
+  bytes: number;
+  files: number;
+  packages: number;
 }
 
 /** Packages that should have been externalized but were bundled anyway. */
@@ -149,6 +191,8 @@ export interface ExtensionBundle {
   name: string;
   repo: string;
   semver: string;
+  /** See `AnalysisTarget.inManifest` — the table marks these rows */
+  inManifest: boolean;
   /** Path on gh-pages, null when nothing is published there */
   pluginDir: string | null;
   chunkCount: number;
@@ -164,8 +208,27 @@ export interface ExtensionBundle {
    * one pass and this stays null if that pass found no usable maps.
    */
   byCategory: BundleCategoryTotal[] | null;
+  byCause: BundleCauseTotal[] | null;
   byPackage: BundlePackage[] | null;
   leaks: BundleLeaks | null;
+  /**
+   * Measured source bytes, the denominator of `ratio`.
+   *
+   * Pre-minification and pre-compression, so meaningless as a size on its own
+   * and never rendered. It exists to be divided into `totalBundleBytes`.
+   */
+  totalSourceBytes: number;
+  /**
+   * `totalBundleBytes / totalSourceBytes`, or null when either is missing.
+   *
+   * Multiply any source-byte figure by this to get what a browser actually
+   * downloads for it. Per-bundle rather than global because the measured
+   * spread across the published bundles is 0.2971 to 0.6619 — a 2.2× range, so
+   * one shared constant would be wrong for almost every extension.
+   */
+  ratio: number | null;
+  /** Source bytes whose cause is shell's to fix; see `SHELL_CAUSED` */
+  shellCausedBytes: number;
   /** Set when the plugin directory could not be read at all */
   error?: string;
 }

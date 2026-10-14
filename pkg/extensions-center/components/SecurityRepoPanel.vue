@@ -9,6 +9,7 @@ import { trimSeries } from '../utils/securityHistory';
 import SecuritySummary from './SecuritySummary.vue';
 import SecurityTable from './SecurityTable.vue';
 import SeverityChart from './SeverityChart.vue';
+import { i18nMixin } from '../utils/i18n';
 
 type View = 'list' | 'chart';
 
@@ -37,6 +38,8 @@ interface Data {
  */
 export default defineComponent({
   name: 'SecurityRepoPanel',
+
+  mixins: [i18nMixin],
 
   components: {
     Banner, LabeledSelect, SecuritySummary, SecurityTable, SeverityChart
@@ -199,6 +202,7 @@ export default defineComponent({
 
         <SecuritySummary
           :counts="data.counts"
+          :total="data.openTotal"
           :unpatched="data.unpatchedCount"
           :oldest="data.oldestOpen"
         />

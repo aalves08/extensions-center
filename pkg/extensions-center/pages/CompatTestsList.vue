@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import TestRunsListView from '../components/TestRunsListView.vue';
 import { ROUTES, COMPAT_TESTS_FILE, COMPAT_TESTS_REPO } from '../config/constants';
+import { useTranslation } from '../utils/i18n';
+const t = useTranslation();
+
 </script>
 
 <template>

@@ -7,7 +7,13 @@
  * bumping three major lines. Carry the fields; do not infer them.
  */
 
-export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+/**
+ * Most severe first. `unknown` is a real level rather than a fallback bucket:
+ * OSV records routinely carry no GitHub severity at all, and grading those as
+ * `low` both understates them and inflates the one level a reader is most
+ * likely to dismiss without looking.
+ */
+export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'unknown'] as const;
 
 export type Severity = typeof SEVERITIES[number];
 
@@ -78,7 +84,7 @@ export interface PackageGroup {
   oldest: string | null;
 }
 
-/** Four severity series sharing one date axis. */
+/** One series per severity, sharing one date axis. */
 export interface SeveritySeries {
   /** Bucket start dates, `YYYY-MM-DD`, oldest first */
   dates: string[];
@@ -86,6 +92,7 @@ export interface SeveritySeries {
   high: number[];
   medium: number[];
   low: number[];
+  unknown: number[];
 }
 
 /** Everything the page knows about one repository. */

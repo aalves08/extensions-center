@@ -52,18 +52,21 @@ export class AlertsUnavailableError extends Error {
  * entire history from a single pull. The table and the chart come out of the
  * same fetch, with no cron job and no stored snapshots.
  */
+
+/**
+ * One in-flight or settled pull per repo, for the lifetime of the tab.
+ *
+ * Module-level rather than per-composable, so it survives the Security page
+ * being unmounted — same reasoning as the state in `useRepoSecurity`. Two
+ * targets, `@rancher/shell` and `@rancher/components`, are slices of the same
+ * `rancher/dashboard` alert list and the slicing is local; without this,
+ * opening both tabs pulls the identical paginated list twice and the estate
+ * view pulls it twice again.
+ */
+const rawByRepo = new Map<string, Promise<DependabotAlert[]>>();
+
 export function useSecurityAlerts(store: RancherStore) {
   const api = useGitHubApi(store);
-
-  /**
-   * One in-flight or settled pull per repo, for the lifetime of the page.
-   *
-   * Two targets — `@rancher/shell` and `@rancher/components` — are slices of
-   * the same `rancher/dashboard` alert list, and the slicing is local. Without
-   * this, opening both tabs pulls the identical paginated list twice, and the
-   * estate view pulls it twice again.
-   */
-  const rawByRepo = new Map<string, Promise<DependabotAlert[]>>();
 
   const fetchRaw = (repo: string): Promise<DependabotAlert[]> => {
     const hit = rawByRepo.get(repo);

@@ -5,17 +5,26 @@ import { Banner } from '@components/Banner';
 
 import { BundlePackage, ExtensionBundle } from '../types/analysis';
 import { TableHeader } from '../types/table';
+import { SHELL_CAUSED } from '../utils/bundleCause';
 import { prettyBytes } from '../utils/bytes';
+import { i18nMixin } from '../utils/i18n';
 
 /**
- * One extension's bundle in full: its chunks, its category split, and the
- * packages inside it.
+ * One extension's bundle in full: its chunks, its category split, what put
+ * each package there, and the packages themselves.
  *
  * Warnings come first because they are the actionable part — everything below
  * them is context for why a number looks the way it does.
+ *
+ * Sizes are disk-scaled wherever the bundle has a ratio. The underlying
+ * measurement is pre-minification source bytes, which is fine for ranking and
+ * misleading as a size, since it overstates the real figure by two to three
+ * times and by a different factor per bundle.
  */
 export default defineComponent({
   name: 'BundleExtensionDetail',
+
+  mixins: [i18nMixin],
 
   components: { Banner, SortableTable },
 
@@ -44,10 +53,27 @@ export default defineComponent({
           name: 'category', labelKey: 'extensionsCenter.bundleAnalysis.cols.category', value: 'category', sort: ['category']
         },
         {
-          name: 'bytes', labelKey: 'extensionsCenter.bundleAnalysis.cols.sourceSize', value: 'bytes', align: 'right', sort: ['bytes']
+          name: 'bytes', labelKey: 'extensionsCenter.bundleAnalysis.cols.shippedSize', value: 'bytes', align: 'right', sort: ['bytes']
         },
         {
           name: 'files', labelKey: 'extensionsCenter.bundleAnalysis.cols.files', value: 'files', align: 'right', sort: ['files']
+        },
+      ];
+    },
+
+    causeHeaders(): TableHeader[] {
+      return [
+        {
+          name: 'cause', labelKey: 'extensionsCenter.bundleAnalysis.cols.cause', value: 'cause', sort: ['cause']
+        },
+        {
+          name: 'bytes', labelKey: 'extensionsCenter.bundleAnalysis.cols.shippedSize', value: 'bytes', align: 'right', sort: ['bytes']
+        },
+        {
+          name: 'packages', labelKey: 'extensionsCenter.bundleAnalysis.cols.packages', value: 'packages', align: 'right', sort: ['packages']
+        },
+        {
+          name: 'fix', labelKey: 'extensionsCenter.bundleAnalysis.cols.fix', sort: false
         },
       ];
     },
@@ -58,10 +84,13 @@ export default defineComponent({
           name: 'pkg', labelKey: 'extensionsCenter.bundleAnalysis.cols.package', value: 'pkg', sort: ['pkg']
         },
         {
-          name: 'category', labelKey: 'extensionsCenter.bundleAnalysis.cols.category', value: 'category', sort: ['category']
+          name: 'resolved', labelKey: 'extensionsCenter.bundleAnalysis.cols.resolved', value: 'resolved', sort: ['resolved']
         },
         {
-          name: 'bytes', labelKey: 'extensionsCenter.bundleAnalysis.cols.sourceSize', value: 'bytes', align: 'right', sort: ['bytes']
+          name: 'cause', labelKey: 'extensionsCenter.bundleAnalysis.cols.cause', value: 'cause', sort: ['cause']
+        },
+        {
+          name: 'bytes', labelKey: 'extensionsCenter.bundleAnalysis.cols.shippedSize', value: 'bytes', align: 'right', sort: ['bytes']
         },
         {
           name: 'files', labelKey: 'extensionsCenter.bundleAnalysis.cols.files', value: 'files', align: 'right', sort: ['files']
@@ -69,9 +98,39 @@ export default defineComponent({
       ];
     },
 
+    /**
+     * Category rows with their bytes converted to disk.
+     *
+     * Done here rather than in the cell template so sorting sorts on the same
+     * number the reader sees. Scaling is monotonic so the order is unchanged,
+     * but a table that sorts on a hidden quantity is a trap for the next
+     * person to add a column.
+     */
+    categoryRows() {
+      return (this.bundle.byCategory || []).map((row) => ({ ...row, bytes: this.scale(row.bytes) }));
+    },
+
+    causeRows() {
+      return (this.bundle.byCause || []).map((row) => ({
+        ...row,
+        bytes:       this.scale(row.bytes),
+        shellCaused: SHELL_CAUSED.has(row.cause),
+      }));
+    },
+
+    packageRows() {
+      return (this.bundle.byPackage || []).map((row) => ({
+        ...row,
+        bytes:    this.scale(row.bytes),
+        // Joined rather than listed: a package resolving to three versions is
+        // rare and a column of bullet lists would wreck every other row.
+        resolved: row.versions.join(', '),
+      }));
+    },
+
     /** Only the packages that should not be there, for the warnings section. */
     leakedPackages(): BundlePackage[] {
-      return (this.bundle.byPackage || [])
+      return this.packageRows
         .filter((p) => p.category === 'shell' || p.category === 'components' || p.category === 'host-provided');
     },
 
@@ -103,8 +162,27 @@ export default defineComponent({
   methods: {
     prettyBytes,
 
+    /**
+     * Source bytes to bytes on disk.
+     *
+     * A no-op when the bundle has no ratio, which happens when its maps
+     * carried no `sourcesContent`. The banner above the tables says so rather
+     * than the numbers quietly changing meaning.
+     */
+    scale(bytes: number): number {
+      return this.bundle.ratio === null ? bytes : Math.round(bytes * this.bundle.ratio);
+    },
+
     categoryLabel(category: string): string {
       return this.t(`extensionsCenter.bundleAnalysis.category.${ category }`);
+    },
+
+    causeLabel(cause: string): string {
+      return this.t(`extensionsCenter.bundleAnalysis.cause.${ cause }`);
+    },
+
+    causeFix(cause: string): string {
+      return this.t(`extensionsCenter.bundleAnalysis.causeFix.${ cause }`);
     },
   },
 });
@@ -174,14 +252,62 @@ export default defineComponent({
       </SortableTable>
     </template>
 
+    <!--
+      One banner for the whole page's worth of numbers rather than a note per
+      table: the scaling applies to every size below this point, and repeating
+      it three times would train people to skip it.
+    -->
+    <Banner
+      v-if="bundle.byPackage && bundle.ratio === null"
+      color="warning"
+      :label="t('extensionsCenter.bundleAnalysis.noRatio')"
+    />
+
+    <template v-if="bundle.byCause && bundle.byCause.length">
+      <h4>{{ t('extensionsCenter.bundleAnalysis.detail.byCause') }}</h4>
+      <p class="text-muted hint">
+        {{ t('extensionsCenter.bundleAnalysis.causeDescription') }}
+      </p>
+      <SortableTable
+        :headers="causeHeaders"
+        :rows="causeRows"
+        key-field="cause"
+        :table-actions="false"
+        :row-actions="false"
+        :search="false"
+        :paging="false"
+        no-rows-key="extensionsCenter.bundleAnalysis.empty"
+        default-sort-by="bytes"
+        :descending="true"
+      >
+        <template #cell:cause="{ row }">
+          <!--
+            Shell-caused rows are marked rather than coloured. The point of
+            the column is ownership, and a red row would read as "broken",
+            which a node polyfill is not — it is simply not this repo's to
+            remove.
+          -->
+          <span :class="{ 'shell-caused': row.shellCaused }">{{ causeLabel(row.cause) }}</span>
+        </template>
+
+        <template #cell:bytes="{ row }">
+          {{ prettyBytes(row.bytes) }}
+        </template>
+
+        <template #cell:fix="{ row }">
+          <span class="text-muted fix">{{ causeFix(row.cause) }}</span>
+        </template>
+      </SortableTable>
+    </template>
+
     <template v-if="bundle.byCategory">
       <h4>{{ t('extensionsCenter.bundleAnalysis.detail.byCategory') }}</h4>
       <p class="text-muted hint">
-        {{ t('extensionsCenter.bundleAnalysis.sourceSizeHint') }}
+        {{ t('extensionsCenter.bundleAnalysis.diskNote') }}
       </p>
       <SortableTable
         :headers="categoryHeaders"
-        :rows="bundle.byCategory"
+        :rows="categoryRows"
         key-field="category"
         :table-actions="false"
         :row-actions="false"
@@ -219,8 +345,16 @@ export default defineComponent({
           <code>{{ row.pkg }}</code>
         </template>
 
-        <template #cell:category="{ row }">
-          {{ categoryLabel(row.category) }}
+        <template #cell:resolved="{ row }">
+          <span v-if="row.resolved">{{ row.resolved }}</span>
+          <span
+            v-else
+            class="text-muted"
+          >{{ t('extensionsCenter.common.na') }}</span>
+        </template>
+
+        <template #cell:cause="{ row }">
+          {{ causeLabel(row.cause) }}
         </template>
 
         <template #cell:bytes="{ row }">
@@ -233,7 +367,7 @@ export default defineComponent({
       <h4>{{ t('extensionsCenter.bundleAnalysis.detail.byPackage') }}</h4>
       <SortableTable
         :headers="packageHeaders"
-        :rows="bundle.byPackage"
+        :rows="packageRows"
         key-field="pkg"
         :table-actions="false"
         :row-actions="false"
@@ -248,8 +382,16 @@ export default defineComponent({
           <code>{{ row.pkg }}</code>
         </template>
 
-        <template #cell:category="{ row }">
-          {{ categoryLabel(row.category) }}
+        <template #cell:resolved="{ row }">
+          <span v-if="row.resolved">{{ row.resolved }}</span>
+          <span
+            v-else
+            class="text-muted"
+          >{{ t('extensionsCenter.common.na') }}</span>
+        </template>
+
+        <template #cell:cause="{ row }">
+          {{ causeLabel(row.cause) }}
         </template>
 
         <template #cell:bytes="{ row }">
@@ -273,6 +415,17 @@ export default defineComponent({
   .hint {
     font-size: 12px;
     margin: 0 0 8px;
+    max-width: 90ch;
+  }
+
+  // Weight, not colour: this marks ownership, and a colour here would compete
+  // with the severity scale used elsewhere in the product for actual danger.
+  .shell-caused {
+    font-weight: 600;
+  }
+
+  .fix {
+    font-size: 12px;
   }
 
   .facts {

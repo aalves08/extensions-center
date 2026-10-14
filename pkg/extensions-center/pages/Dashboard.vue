@@ -22,6 +22,9 @@ import { useManifestPrs } from '../composables/useManifestPrs';
 import { useOfficialRepos } from '../composables/useOfficialRepos';
 import { useProxyEndpoint } from '../composables/useProxyEndpoint';
 import { useTestRuns } from '../composables/useTestRuns';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 

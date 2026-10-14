@@ -2,6 +2,7 @@
 import { defineComponent, PropType } from 'vue';
 import { RouteLocationRaw } from 'vue-router';
 import AsyncButton from '@shell/components/AsyncButton.vue';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * Header shared by every data section: title, an optional link through to the
@@ -13,6 +14,8 @@ import AsyncButton from '@shell/components/AsyncButton.vue';
  */
 export default defineComponent({
   name: 'SectionHeader',
+
+  mixins: [i18nMixin],
 
   components: { AsyncButton },
 

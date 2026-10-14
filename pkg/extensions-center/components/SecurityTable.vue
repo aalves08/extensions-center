@@ -2,9 +2,29 @@
 import { defineComponent, PropType } from 'vue';
 import SortableTable from '@shell/components/SortableTable/index.vue';
 
-import { PackageGroup, VulnSource } from '../types/security';
+import { Advisory, PackageGroup, VulnSource } from '../types/security';
 import { TableHeader } from '../types/table';
 import { severityRank } from '../utils/severity';
+import { i18nMixin } from '../utils/i18n';
+
+/** One label/value pair in an expanded advisory. */
+interface DetailField {
+  key: string;
+  label: string;
+  value: string;
+  /** Identifiers and paths are read character by character, so they get a mono face */
+  mono?: boolean;
+}
+
+/**
+ * Where a CVE is actually documented.
+ *
+ * GitHub's advisory page is already one click away through the GHSA link
+ * beside it; the NVD entry is the one that carries the CVSS vector, the CPE
+ * list and the upstream references, which is what someone clicking a CVE id is
+ * after.
+ */
+const NVD_BASE = 'https://nvd.nist.gov/vuln/detail/';
 
 /**
  * A repo's vulnerable packages, expandable to the advisories behind each one.
@@ -14,6 +34,8 @@ import { severityRank } from '../utils/severity';
  */
 export default defineComponent({
   name: 'SecurityTable',
+
+  mixins: [i18nMixin],
 
   components: { SortableTable },
 
@@ -96,6 +118,59 @@ export default defineComponent({
     shortDate(iso: string | null): string {
       return iso ? new Date(iso).toLocaleDateString() : this.t('extensionsCenter.common.na');
     },
+
+    cveUrl(cve: string): string {
+      return `${ NVD_BASE }${ encodeURIComponent(cve) }`;
+    },
+
+    /**
+     * The rows of an expanded advisory's field grid.
+     *
+     * Built here rather than as five `v-if` spans in the template so the grid
+     * never has a gap in it: a public-data advisory carries no manifest, no
+     * scope and no relationship, and an empty label beside an empty value
+     * reads as missing data rather than as data that does not exist.
+     */
+    fields(advisory: Advisory): DetailField[] {
+      const out: DetailField[] = [];
+      const label = (key: string) => this.t(`extensionsCenter.security.detail.${ key }`);
+
+      if (advisory.vulnerableRange) {
+        out.push({
+          key: 'vulnerable', label: label('vulnerable'), value: advisory.vulnerableRange, mono: true
+        });
+      }
+
+      if (advisory.manifest) {
+        out.push({
+          key: 'manifest', label: label('manifest'), value: advisory.manifest, mono: true
+        });
+      }
+
+      if (advisory.relationship) {
+        out.push({
+          key:   'relationship',
+          label: label('relationship'),
+          value: this.t(`extensionsCenter.security.relationship.${ advisory.relationship }`),
+        });
+      }
+
+      if (advisory.scope) {
+        out.push({
+          key:   'scope',
+          label: label('scope'),
+          value: this.t(`extensionsCenter.security.scope.${ advisory.scope }`),
+        });
+      }
+
+      if (advisory.createdAt) {
+        out.push({
+          key: 'reported', label: label('reported'), value: this.shortDate(advisory.createdAt)
+        });
+      }
+
+      return out;
+    },
   },
 });
 </script>
@@ -160,45 +235,90 @@ export default defineComponent({
       {{ shortDate(row.oldest) }}
     </template>
 
+    <!--
+      One block per advisory, in three bands: who it is (severity + the two
+      identifiers + whether a fix exists), what it is (the summary, in normal
+      ink), and the particulars (a label/value grid).
+
+      The old version ran all of that together as one wrapping line plus a row
+      of muted spans, which left a bare semver range sitting next to a bare
+      file path with nothing saying which was which.
+    -->
     <template #sub-row="{ row, fullColspan }">
       <tr class="sub-row">
         <td :colspan="fullColspan">
-          <ul class="advisories">
-            <li
+          <div class="advisories">
+            <div
               v-for="advisory in row.advisories"
               :key="advisory.id"
+              class="advisory"
             >
-              <div class="line">
+              <div class="head">
                 <span
                   class="badge"
                   :class="`sev-${ advisory.severity }`"
                 >{{ t(`extensionsCenter.security.severity.${ advisory.severity }`) }}</span>
+
                 <a
+                  class="ident"
                   :href="advisory.url"
+                  :title="t('extensionsCenter.security.detail.ghsaLink', { value: advisory.ghsa })"
                   target="_blank"
                   rel="noopener noreferrer"
                 >{{ advisory.ghsa }}</a>
-                <span
+
+                <!--
+                  The CVE is the id people paste into a ticket or a compliance
+                  tool, so it has to be reachable rather than selectable.
+                -->
+                <a
                   v-if="advisory.cve"
-                  class="text-muted"
-                >{{ advisory.cve }}</span>
-                <span class="summary">{{ advisory.summary }}</span>
+                  class="ident"
+                  :href="cveUrl(advisory.cve)"
+                  :title="t('extensionsCenter.security.detail.cveLink', { value: advisory.cve })"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ advisory.cve }}</a>
+
+                <!--
+                  Glyph plus words, never the glyph alone: this is the one fact
+                  that decides whether the row is actionable today.
+                -->
+                <span
+                  class="fix"
+                  :class="{ 'no-fix': !advisory.patchedVersion }"
+                >
+                  <i
+                    class="icon"
+                    :class="advisory.patchedVersion ? 'icon-confirmation-alt' : 'icon-notify-error'"
+                  />
+                  <span v-if="advisory.patchedVersion">
+                    {{ t('extensionsCenter.security.detail.fixedIn', { value: advisory.patchedVersion }) }}
+                  </span>
+                  <span v-else>{{ t('extensionsCenter.security.detail.noFix') }}</span>
+                </span>
               </div>
-              <div class="meta text-muted">
-                <span v-if="advisory.vulnerableRange">
-                  {{ t('extensionsCenter.security.detail.range', { value: advisory.vulnerableRange }) }}
-                </span>
-                <span v-if="advisory.patchedVersion">
-                  {{ t('extensionsCenter.security.detail.patched', { value: advisory.patchedVersion }) }}
-                </span>
-                <span v-if="advisory.manifest">{{ advisory.manifest }}</span>
-                <span v-if="advisory.relationship">
-                  {{ t(`extensionsCenter.security.relationship.${ advisory.relationship }`) }}
-                </span>
-                <span v-if="advisory.createdAt">{{ shortDate(advisory.createdAt) }}</span>
-              </div>
-            </li>
-          </ul>
+
+              <p class="summary">
+                {{ advisory.summary }}
+              </p>
+
+              <dl class="fields">
+                <template
+                  v-for="field in fields(advisory)"
+                  :key="field.key"
+                >
+                  <dt>{{ field.label }}</dt>
+                  <dd
+                    :class="{ mono: field.mono }"
+                    :title="field.value"
+                  >
+                    {{ field.value }}
+                  </dd>
+                </template>
+              </dl>
+            </div>
+          </div>
         </td>
       </tr>
     </template>
@@ -206,6 +326,8 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+@import '../styles/severity';
+
 .pkg {
   font-weight: 600;
 }
@@ -226,40 +348,91 @@ export default defineComponent({
   text-transform: uppercase;
   white-space: nowrap;
 
-  &.sev-critical { background: var(--error); color: var(--error-text, #fff); }
-  &.sev-high { background: var(--warning); color: var(--body-bg); }
-  &.sev-medium { background: var(--info); color: var(--body-bg); }
-  &.sev-low { background: var(--muted); color: var(--body-bg); }
+  // The severity palette rather than shell's status tokens: `--warning` and
+  // `--info` are state colours and read as "caution" and "notice" — two
+  // unrelated states, not two steps on one scale — and `--muted` for low is
+  // the same grey as disabled text. Low and unknown take dark ink; see
+  // `$low-na-text`.
+  @include severity-fill('sev-');
 }
 
 .advisories {
-  list-style: none;
-  margin: 0;
-  padding: 8px 0 8px 32px;
+  padding: 12px 0 12px 32px;
+}
 
-  li + li {
-    border-top: 1px solid var(--border);
-    margin-top: 8px;
-    padding-top: 8px;
+.advisory + .advisory {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+// Identifiers are fixed-shape strings read character by character, and the
+// SKILL is explicit that they never wrap onto a second line: a GHSA id broken
+// across two rows stops being recognisable as one.
+.ident {
+  font-family: monospace;
+  font-size: 12px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fix {
+  align-items: center;
+  display: flex;
+  font-size: 12px;
+  gap: 4px;
+  margin-left: auto;
+  white-space: nowrap;
+
+  // `--info`, not a success green: a fix existing is information, not health.
+  .icon {
+    color: var(--info);
+    font-size: 16px;
+  }
+}
+
+.fix.no-fix,
+.fix.no-fix .icon {
+  color: var(--error);
+}
+
+// Capped rather than full-bleed. The sub-row spans every column, and a GitHub
+// advisory summary set across 1800px is one unreadable line.
+.summary {
+  margin: 8px 0 0;
+  max-width: 100ch;
+}
+
+.fields {
+  display: grid;
+  font-size: 12px;
+  gap: 2px 16px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: 10px 0 0;
+  max-width: 820px;
+
+  dt {
+    color: var(--disabled-text);
   }
 
-  .line {
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .summary {
+  dd {
+    margin: 0;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    font-size: 12px;
-    gap: 12px;
-    margin-top: 2px;
+  .mono {
+    font-family: monospace;
   }
 }
 </style>

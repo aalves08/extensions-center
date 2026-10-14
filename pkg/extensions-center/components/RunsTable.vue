@@ -7,6 +7,7 @@ import { BLANK_CLUSTER } from '../config/constants';
 import { TableHeader } from '../types/table';
 import { PaginationResult, TestRun } from '../types/tests';
 import { formatDuration } from '../utils/runs';
+import { useTranslation } from '../utils/i18n';
 
 /**
  * The run table shared by the dashboard tiles and the full list views.
@@ -19,6 +20,9 @@ import { formatDuration } from '../utils/runs';
  * slicing a preloaded array, which matters because each page costs one request
  * per run to resolve its jobs.
  */
+
+const t = useTranslation();
+
 const props = withDefaults(defineProps<{
   runs: TestRun[];
   loading?: boolean;

@@ -4,7 +4,7 @@ import {
 
 /** Most severe first, which is the order everything on the page is ranked in. */
 const RANK: Record<Severity, number> = {
-  critical: 0, high: 1, medium: 2, low: 3,
+  critical: 0, high: 1, medium: 2, low: 3, unknown: 4,
 };
 
 export function severityRank(severity: Severity): number {
@@ -18,7 +18,7 @@ export function worseOf(a: Severity, b: Severity): Severity {
 /** An all-zero severity tally, for callers that accumulate into one. */
 export function emptyCounts(): Record<Severity, number> {
   return {
-    critical: 0, high: 0, medium: 0, low: 0,
+    critical: 0, high: 0, medium: 0, low: 0, unknown: 0,
   };
 }
 
@@ -44,12 +44,15 @@ export function normaliseSeverity(raw: string | null | undefined): Severity {
   case 'moderate':
   case 'medium':
     return 'medium';
-  default:
-    // Anything unrecognised — including OSV records with no GitHub severity at
-    // all — lands on `low` rather than being dropped. An advisory we cannot
-    // grade is still an advisory, and silently discarding it would understate
-    // the count.
+  case 'low':
     return 'low';
+  default:
+    // Anything unrecognised — including the OSV records that carry no GitHub
+    // severity at all — is `unknown`, which is its own level and not a synonym
+    // for `low`. An advisory we cannot grade is still an advisory, so it is
+    // never dropped; it is also not evidence of low risk, so it is no longer
+    // filed as if it were.
+    return 'unknown';
   }
 }
 

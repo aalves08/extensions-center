@@ -13,6 +13,9 @@ import {
 import { useExtensionConfig } from '../composables/useExtensionConfig';
 import { LlmProvider } from '../types/common';
 import { errorMessage } from '../types/rancher';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 
@@ -44,8 +47,6 @@ const claudeAwsRegion = ref('');
 
 const message = ref<string | null>(null);
 const messageColor = ref<'success' | 'error'>('success');
-
-const t = (key: string, args?: Record<string, unknown>) => store.getters['i18n/t'](key, args);
 
 const description = computed(() => t('extensionsCenter.settings.description', { secret: CONFIG_SECRET_NAME, namespace: CONFIG_NAMESPACE }));
 
