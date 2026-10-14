@@ -3,6 +3,7 @@ import { defineComponent, PropType } from 'vue';
 import { BadgeState } from '@components/BadgeState';
 
 import { RunStatus } from '../types/tests';
+import { i18nMixin } from '../utils/i18n';
 
 /** Rancher state background classes, one per run outcome. */
 const COLORS: Record<RunStatus, string> = {
@@ -21,6 +22,8 @@ const COLORS: Record<RunStatus, string> = {
  */
 export default defineComponent({
   name: 'RunStatusBadge',
+
+  mixins: [i18nMixin],
 
   components: { BadgeState },
 

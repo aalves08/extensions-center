@@ -8,6 +8,9 @@ import KnownReposTable from '../components/KnownReposTable.vue';
 import SectionHeader from '../components/SectionHeader.vue';
 import { DASHBOARD_ROW_LIMIT } from '../config/constants';
 import { useKnownRepos } from '../composables/useKnownRepos';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 

@@ -1,6 +1,9 @@
 import { Ref, ref } from 'vue';
 
-import { OFFICIAL_MANIFEST_PATH, OFFICIAL_MANIFEST_REPO, SECURITY_FIXED_REPOS, SECURITY_NPM_TARGETS } from '../config/constants';
+import {
+  OFFICIAL_MANIFEST_PATH, OFFICIAL_MANIFEST_REPO, SECURITY_CACHE_TTL_MINUTES,
+  SECURITY_FIXED_REPOS, SECURITY_NPM_TARGETS
+} from '../config/constants';
 import { Manifest } from '../types/github';
 import { RancherStore } from '../types/rancher';
 import {
@@ -9,38 +12,69 @@ import {
 import { addCounts, emptyCounts } from '../utils/severity';
 import { describeGitHubError, useGitHubApi } from './useGitHubApi';
 import { usePublicVulns } from './usePublicVulns';
+import { clearRepoLayoutCache, repoLayout } from './useRepoExtensions';
 import { AlertsUnavailableError, useSecurityAlerts } from './useSecurityAlerts';
 
 /**
  * The Security page's data layer.
  *
- * Nothing here is persisted. Security data going stale is worse than security
- * data being slow, so every visit reads current state; the only caching is the
- * per-session map in `useOsvCache` and the `loaded` map below, which exist so
- * that *re-opening a tab you already looked at* is free.
- *
  * Per-repo loads are lazy — you pay for the tab you click. The estate rollup
  * is the one view that cannot be lazy, since it needs all of them, so the page
  * puts it behind a button rather than firing ~800 requests on page open.
  */
+
+/**
+ * Page state, module-level so it outlives the page being unmounted.
+ *
+ * The Security page is one route among nine and a full pull is minutes of
+ * work, so charging someone for it again because they clicked Settings and
+ * came back is not a defensible trade. What this deliberately does *not* do is
+ * outlive the tab: nothing goes to a ConfigMap or to storage, so a browser
+ * refresh still re-reads everything — stale security data is still worse than
+ * slow security data, and that rule is only being relaxed for in-session
+ * navigation.
+ *
+ * Freshness is bounded rather than assumed. Anything older than
+ * `SECURITY_CACHE_TTL_MINUTES` is re-read on the next look, and the age of
+ * what is on screen is reported by `lastRefreshed` regardless.
+ */
+const targets: Ref<SecurityTarget[]> = ref([]);
+const loaded: Ref<Record<string, RepoSecurity>> = ref({});
+const loading: Ref<Record<string, boolean>> = ref({});
+const targetsError: Ref<string | null> = ref(null);
+const rollupProgress: Ref<SecurityProgress | null> = ref(null);
+
+/**
+ * Whether the estate view has been filled at least once.
+ *
+ * Lives here rather than in the page for the same reason as everything above:
+ * it is what tells a returning visitor they are looking at a loaded table
+ * instead of the "this costs a minute" prompt.
+ */
+const rollupLoaded = ref(false);
+
+/**
+ * Package names a `package.json` declares, cached per file.
+ *
+ * `dependencies` and `peerDependencies` only — see `SECURITY_NPM_TARGETS`
+ * for why `devDependencies` are deliberately left out.
+ */
+const declaredCache = new Map<string, Set<string>>();
+
+/** Whether a loaded repo is old enough to be worth re-reading. */
+function isStale(result: RepoSecurity): boolean {
+  const at = Date.parse(result.fetchedAt);
+
+  // An unparseable timestamp counts as ancient rather than as current: the
+  // failure mode of re-fetching is a slow tab, and of not re-fetching is a
+  // wrong one.
+  return !Number.isFinite(at) || Date.now() - at > SECURITY_CACHE_TTL_MINUTES * 60_000;
+}
+
 export function useRepoSecurity(store: RancherStore) {
   const api = useGitHubApi(store);
   const alerts = useSecurityAlerts(store);
   const publicVulns = usePublicVulns();
-
-  const targets: Ref<SecurityTarget[]> = ref([]);
-  const loaded: Ref<Record<string, RepoSecurity>> = ref({});
-  const loading: Ref<Record<string, boolean>> = ref({});
-  const targetsError: Ref<string | null> = ref(null);
-  const rollupProgress: Ref<SecurityProgress | null> = ref(null);
-
-  /**
-   * Package names a `package.json` declares, cached per file.
-   *
-   * `dependencies` and `peerDependencies` only — see `SECURITY_NPM_TARGETS`
-   * for why `devDependencies` are deliberately left out.
-   */
-  const declaredCache = new Map<string, Set<string>>();
 
   const declaredPackages = async(repo: string, path: string): Promise<Set<string>> => {
     const key = `${ repo }:${ path }`;
@@ -70,15 +104,29 @@ export function useRepoSecurity(store: RancherStore) {
   };
 
   /**
-   * The tab strip: the catalogue repos, the two NPM packages, then every
-   * official extension.
+   * The tab strip: the catalogue repos, the two NPM packages, then one tab per
+   * official extension repo.
    *
    * The extensions are read live from `manifest.json` rather than hardcoded,
    * so refreshing the official extensions list adds a tab for any new
    * extension with no code change — which is the whole reason this is not a
    * constant.
    */
-  const loadTargets = async(): Promise<void> => {
+  const loadTargets = async(force = false): Promise<void> => {
+    // The tab strip only changes when an extension is added to the manifest,
+    // so re-reading it on every visit buys nothing. A previous *failure* is
+    // not a result worth keeping, though — that would leave the strip
+    // permanently short of every manifest extension until a browser refresh.
+    if (targets.value.length && !targetsError.value && !force) {
+      return;
+    }
+
+    if (force) {
+      // Re-read each repo's `pkg/` too, so a sibling added upstream shows up
+      // in the tab's name.
+      clearRepoLayoutCache();
+    }
+
     targetsError.value = null;
 
     // The two published packages lead, ahead of the catalogue repos: they are
@@ -98,13 +146,38 @@ export function useRepoSecurity(store: RancherStore) {
     try {
       const manifest = await api.getJsonFile<Manifest>(OFFICIAL_MANIFEST_REPO, OFFICIAL_MANIFEST_PATH);
 
-      const extensions: SecurityTarget[] = Object.entries(manifest?.extensions || {})
-        .map(([name, entry]) => ({
-          repo: entry.repo, label: name, fixed: false
-        }))
-        .filter((t) => !!t.repo && !SECURITY_FIXED_REPOS.includes(t.repo as typeof SECURITY_FIXED_REPOS[number]))
+      // One tab per *repo*, not per extension. Vulnerabilities are raised
+      // against a repo's lockfile, so two extensions out of one repo would
+      // have produced two tabs showing byte-identical rows — and doubled the
+      // cost of the estate rollup to do it. The tab names every extension it
+      // covers so the duplicate is visibly gone rather than silently dropped.
+      const byRepo = new Map<string, string[]>();
+
+      for (const [name, entry] of Object.entries(manifest?.extensions || {})) {
+        if (!entry?.repo || SECURITY_FIXED_REPOS.includes(entry.repo as typeof SECURITY_FIXED_REPOS[number])) {
+          continue;
+        }
+
+        byRepo.set(entry.repo, [...(byRepo.get(entry.repo) || []), name]);
+      }
+
+      // `repoLayout` adds the siblings the manifest never named, and falls back
+      // to the manifest names on its own if the `pkg/` read fails — so a
+      // discovery problem costs the tab a name, not the tab.
+      const labelled = await Promise.all([...byRepo.entries()].map(async([repo, names]) => {
+        const layout = await repoLayout(store, repo, names);
+
+        return { repo, label: layout.extensions.map((e) => e.name).join(' + ') || names.join(' + ') };
+      }));
+
+      // Keyed on the repo rather than the label, same as the fixed targets
+      // above: the label now grows a name every time a team adds a `pkg/` dir,
+      // and this id is the URL hash.
+      const extensions: SecurityTarget[] = labelled
         .sort((a, b) => a.label.localeCompare(b.label))
-        .map((t) => ({ ...t, id: uniqueId(t.label, taken) }));
+        .map((t) => ({
+          ...t, fixed: false, id: uniqueId(t.repo.split('/')[1], taken)
+        }));
 
       targets.value = [...fixed, ...extensions];
     } catch (e) {
@@ -126,8 +199,17 @@ export function useRepoSecurity(store: RancherStore) {
   const fetchTarget = async(target: SecurityTarget, force = false): Promise<RepoSecurity> => {
     const existing = loaded.value[target.id];
 
-    if (existing && !force) {
+    // A cached *failure* is deliberately not honoured. The usual cause is a
+    // transient rate limit, and a tab that stays broken until a browser
+    // refresh is a worse outcome than one extra request.
+    if (existing && !force && !existing.error && !isStale(existing)) {
       return existing;
+    }
+
+    // Past the TTL the underlying alert pull has to go as well, or the repo is
+    // re-derived from the same cached response and nothing actually refreshes.
+    if (existing) {
+      alerts.invalidate(target.repo);
     }
 
     loading.value = { ...loading.value, [target.id]: true };
@@ -282,6 +364,7 @@ export function useRepoSecurity(store: RancherStore) {
     loaded,
     loading,
     rollupProgress,
+    rollupLoaded,
     loadTargets,
     loadRepo,
     loadAll,

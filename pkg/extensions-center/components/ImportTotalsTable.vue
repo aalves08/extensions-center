@@ -1,10 +1,12 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
 import SortableTable from '@shell/components/SortableTable/index.vue';
+import Tag from '@shell/components/Tag.vue';
 
 import { ExtensionImportTotals } from '../types/analysis';
 import { TableHeader } from '../types/table';
 import { prettyBytes } from '../utils/bytes';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * Per-extension import totals — the "who leans on the shell hardest" table.
@@ -16,7 +18,9 @@ import { prettyBytes } from '../utils/bytes';
 export default defineComponent({
   name: 'ImportTotalsTable',
 
-  components: { SortableTable },
+  mixins: [i18nMixin],
+
+  components: { SortableTable, Tag },
 
   props: {
     rows: {
@@ -92,6 +96,13 @@ export default defineComponent({
         href="#"
         @click.prevent="$emit('select', row.name)"
       >{{ row.name }}</a>
+      <Tag
+        v-if="!row.inManifest"
+        v-clean-tooltip="t('extensionsCenter.common.unlistedTooltip')"
+        class="unlisted"
+      >
+        {{ t('extensionsCenter.common.unlisted') }}
+      </Tag>
       <i
         v-if="row.error"
         v-clean-tooltip="row.error"
@@ -112,5 +123,10 @@ export default defineComponent({
 <style lang="scss" scoped>
 .icon-warning {
   margin-left: 4px;
+}
+
+.unlisted {
+  margin-left: 6px;
+  white-space: nowrap;
 }
 </style>

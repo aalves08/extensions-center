@@ -24,6 +24,11 @@ extensionsCenter:
     loadFailed: Could not load this data.
     retry: Try again
     unknown: Unknown
+    unlisted: Unlisted
+    unlistedTooltip: >-
+      Found in this repository's pkg/ folder and built like its siblings, but
+      not listed in the rancher/ui-plugin-charts manifest — so it is not in the
+      official catalogue yet.
 
   errors:
     proxyFailed: >-
@@ -222,8 +227,57 @@ extensionsCenter:
       Shell paths that no longer resolve to a file in rancher/dashboard. Each is
       either a stale import, a path that was renamed, or something private that
       was never part of the public API.
+    surfaceDescription: >-
+      Shell marks nothing as public or private, so every path below is API that
+      has to keep working. These are grouped by how exposed each one is to shell
+      changing underneath it — expand a row to see the exact symbols that would
+      break.
+    noRisky: >-
+      No extension imports a private or internal shell path. Every import is
+      against a module path shell can reasonably be expected to keep.
+    exposureTitle: Exposure by extension
+    pathsTitle: Paths
+    showAllPaths: 'Show all {count} shell paths, not just the ones needing attention'
+    risk:
+      private: Private
+      internal: Internal
+      file-suffix: File path
+      ok: OK
+    riskNote:
+      private: >-
+        Reaches into shell's own screens or startup code, which carry no
+        stability guarantee and can be moved or deleted in any release without
+        anything warning the extension.
+      internal: >-
+        Depends on shell's internal wiring — its store, mixins or resource
+        models — rather than on a contract meant for consumers.
+      file-suffix: >-
+        Imports a concrete file rather than a module path, so it pins the file
+        extension. Converting that file from .js to .ts inside shell breaks this
+        import, even though nothing about its behaviour changed.
+      ok: >-
+        A plain module path with no obvious problem. It is still unversioned
+        API, but it is the kind a supported surface would most likely keep.
+    area:
+      form-components: Form components
+      formatters: Formatters
+      components: Components
+      rancher-components: Rancher components
+      utils: Utils
+      config: Config and constants
+      models: Resource models
+      store: Store and plugins
+      composables: Composables
+      mixins: Mixins
+      types: Types and contracts
+      resource-views: Resource views
+      pages: Pages
+      assets: Assets
+      build-internals: Build and runtime internals
+      other: Other
     tabs:
       totals: Per Extension
+      surface: API Surface
       shell: Shell Paths
       components: Components Paths
       external: External Packages
@@ -236,10 +290,15 @@ extensionsCenter:
       shellPaths: Unique shell paths
       componentsImports: Components imports
       externalPkgs: External packages
+      symbols: Distinct symbols
+      riskyPaths: Paths needing attention
     detail:
       shell: '@rancher/shell imports'
       components: '@rancher/components imports'
       external: External packages
+      symbols: Symbols
+      noSymbols: Default or namespace import only — no named symbols.
+      usedBy: Used by
     cols:
       extension: Extension
       version: Version
@@ -260,6 +319,12 @@ extensionsCenter:
       imports: Imports
       sourceSize: Source size
       specifiers: Imported names
+      risk: Risk
+      area: Area
+      symbols: Symbols
+      paths: Paths
+      riskyPaths: Needing attention
+      meaning: What it means
 
   bundleAnalysis:
     title: Bundle Analysis
@@ -274,9 +339,11 @@ extensionsCenter:
     refreshCost: >-
       Downloads up to 98 MB of source maps from gh-pages. Takes several minutes.
     sourceNote: >-
-      Bundle size is total minified JS across all code-split chunks. Source size
-      is pre-minification bytes read from source maps — use it for relative
-      comparison, not as an absolute.
+      Bundle size is total minified JS across all code-split chunks. The
+      breakdown figures come from source maps, which record pre-minification
+      bytes, so each is scaled to disk by its own bundle's source-to-disk
+      ratio — that way a breakdown adds up to the bundle beside it rather than
+      to two or three times it.
     sourceSizeHint: >-
       Pre-minification bytes, merged across every chunk.
     notPublished: Not published
@@ -290,6 +357,7 @@ extensionsCenter:
       second copy of code that is already loaded.
     tabs:
       overview: Overview
+      cause: By Cause
       leaks: Externalization
       perExtension: Extension Detail
     summary:
@@ -297,8 +365,10 @@ extensionsCenter:
       totalBytes: Total shipped JS
       largest: Largest bundle
       leaking: Extensions with leaks
+      shellCaused: Shell-caused weight
     detail:
       chunks: Chunks
+      byCause: Why it is in the bundle
       byCategory: By category
       byPackage: By package
       leaked: Should have been external
@@ -318,6 +388,57 @@ extensionsCenter:
       external-lib: Bundled external library
       externalized: Externalized
       webpack-runtime: Webpack runtime
+    # Why a package is in the bundle, as opposed to where its files came from.
+    # The first six are shell's to fix without any extension author touching
+    # their code, which is the whole reason the axis exists.
+    cause:
+      shell-code: Shell code bundled
+      shell-dep: Shell dependency
+      shell-dep-transitive: Shell dependency (transitive)
+      node-polyfill: Node polyfill
+      build-tooling: Build tooling
+      already-external: Stale build (now externalized)
+      extension-code: Extension own code
+      extension-dep: Extension dependency
+      generated: Generated
+      webpack-runtime: Webpack runtime
+      externalized: Externalized
+    causeFix:
+      shell-code: Externalize @rancher/shell in the library build.
+      shell-dep: >-
+        Externalize it, or cut the shell import that drags it in. Either way the
+        fix is in rancher/dashboard, not here.
+      shell-dep-transitive: Follows its parent; fixing the parent clears it.
+      node-polyfill: >-
+        Drop NodePolyfillPlugin from library builds. It injects Buffer, process
+        and console into every extension whether or not anything asked.
+      build-tooling: >-
+        Build-time code that cannot run in a browser. Keep it out of the module
+        graph.
+      already-external: >-
+        Shell already externalizes this. Rebuilding against a current shell
+        removes it.
+      extension-code: Not shell's to fix.
+      extension-dep: Not shell's to fix.
+      generated: Generated by the build. Expected.
+      webpack-runtime: Module plumbing. Expected.
+      externalized: Recorded but not bundled. This is the good outcome.
+    causeDescription: >-
+      Categories say where a file came from; causes say who put it there, which
+      is the version that maps onto an owner and a change. Everything above the
+      rule is recoverable in rancher/dashboard alone.
+    shellCaused: Shell-caused
+    diskNote: >-
+      Sizes are source bytes scaled to disk by this bundle's own
+      source-to-disk ratio, so they add up to the shipped size rather than to
+      two or three times it. The ratio is measured per bundle: across the
+      published extensions it runs from 0.30 to 0.66, so one shared figure
+      would be wrong for almost all of them.
+    noRatio: >-
+      This bundle's source maps carried no content, so source bytes could not
+      be scaled to disk. Sizes below are pre-minification and not comparable
+      with the shipped size.
+    tabsCause: By cause
     cols:
       extension: Extension
       version: Version
@@ -330,8 +451,15 @@ extensionsCenter:
       shellLeak: Shell bundled?
       componentsLeak: Components bundled?
       category: Category
+      cause: Cause
+      fix: Fix
       package: Package
+      packages: Packages
       sourceSize: Source size
+      shippedSize: Shipped size
+      shellCaused: Shell-caused
+      ratio: Ratio
+      resolved: Resolved version
       files: Files
 
   links:
@@ -451,6 +579,7 @@ extensionsCenter:
       high: High
       medium: Medium
       low: Low
+      unknown: Unknown
 
     scope:
       runtime: Runtime
@@ -481,6 +610,10 @@ extensionsCenter:
       months: '{count} months'
       years: '{count} years'
 
+    summary:
+      severityTitle: Open advisories
+      remediationTitle: Remediation
+
     tiles:
       unpatched: No patch available
       oldest: Oldest open
@@ -503,13 +636,64 @@ extensionsCenter:
       oldest: Oldest
       repo: Repository
       source: Source
+      vulnerabilities: Vulnerabilities
       total: Total
+      reach: Ships?
+      inBundles: In bundles
+      shippedBytes: Shipped size
+      flaggedBy: Flagged by
 
     manifestCount: '{count} manifests'
 
+    reach:
+      tab: By package
+      explain: >-
+        Every other tab is organised by repository, which is how the advisories
+        arrive and not how the risk is spread. This one crosses the vulnerable
+        packages against what the published bundles on gh-pages actually
+        contain, so a package appears once and is ranked by whether it reaches
+        a browser. Most of what a lockfile flags never ships — build tooling,
+        test harnesses, dependencies that tree-shaking removed — and those are
+        hygiene, not exposure.
+      empty: Nothing vulnerable was found in any published bundle.
+      noBundles: >-
+        Bundle analysis has never been run, so there is nothing to cross these
+        advisories against. Run it from the Bundle Analysis page first.
+      noRepos: >-
+        No repositories have been read yet. Open a repo tab, or load the whole
+        estate from the All repos tab, and the packages will appear here.
+      scope: 'Across {repos} repos and {bundles} analysed bundles'
+      notShippedNote: >-
+        This package is in no published bundle. Still worth fixing, but it is
+        not something a user downloads.
+      resolved: 'Resolved: {value}'
+      noLockfile: No lockfile read
+      stats:
+        confirmed: ship a vulnerable version
+        unconfirmed: ship, version unconfirmed
+        notShipped: do not ship
+      verdict:
+        # Not severities. These say how confidently the shipped version was
+        # matched against an advisory's range, which is a separate axis.
+        hit: Ships
+        partial: Ships (one of several)
+        unknown: Ships, unconfirmed
+        miss: Not shipped
+
     detail:
+      # Sentence forms, used where the field sits inline in a list
       range: 'Vulnerable: {value}'
       patched: 'Fixed in: {value}'
+      # Bare labels, used where the field sits in the expanded advisory's grid
+      vulnerable: Vulnerable
+      manifest: Manifest
+      relationship: Dependency
+      scope: Scope
+      reported: Reported
+      fixedIn: 'Fixed in {value}'
+      noFix: No patch available
+      ghsaLink: 'View {value} on GitHub'
+      cveLink: 'View {value} in the National Vulnerability Database'
 
     publicSource:
       title: 'Source: public data, not Dependabot'
@@ -519,7 +703,9 @@ extensionsCenter:
         against the OSV advisory database. That means no dismissals are
         honoured, nothing is deduplicated the way Dependabot does it, and there
         is no runtime versus development split — so these counts run higher and
-        are not comparable with the counts on a Dependabot repo.
+        are not comparable with the counts on a Dependabot repo. Advisories
+        that carry no severity rating at all are counted as Unknown rather than
+        being graded down to Low.
       unresolved: >-
         {count} dependencies were declared as a version range the dependency
         graph never resolved. They are excluded rather than guessed at.

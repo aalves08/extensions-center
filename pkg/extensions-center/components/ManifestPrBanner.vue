@@ -3,6 +3,7 @@ import { defineComponent, PropType } from 'vue';
 import { Banner } from '@components/Banner';
 
 import { ManifestPr } from '../types/manifestPr';
+import { i18nMixin } from '../utils/i18n';
 
 /** Changes spelled out before the rest collapse into a count. */
 const SHOWN_CHANGES = 3;
@@ -17,6 +18,8 @@ const SHOWN_CHANGES = 3;
  */
 export default defineComponent({
   name: 'ManifestPrBanner',
+
+  mixins: [i18nMixin],
 
   components: { Banner },
 

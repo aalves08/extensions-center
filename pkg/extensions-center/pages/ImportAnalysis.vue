@@ -2,16 +2,23 @@
 import { computed, onMounted, ref } from 'vue';
 import { useStore } from 'vuex';
 import { Banner } from '@components/Banner';
+import { Checkbox } from '@components/Form/Checkbox';
 import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
+import SortableTable from '@shell/components/SortableTable/index.vue';
 import Tabbed from '@shell/components/Tabbed/index.vue';
 import Tab from '@shell/components/Tabbed/Tab.vue';
 
 import AnalysisProgressBar from '../components/AnalysisProgressBar.vue';
+import ApiSurfaceTable from '../components/ApiSurfaceTable.vue';
 import ExtensionImportDetailView from '../components/ExtensionImportDetail.vue';
 import ImportPathsTable from '../components/ImportPathsTable.vue';
 import ImportTotalsTable from '../components/ImportTotalsTable.vue';
 import SectionHeader from '../components/SectionHeader.vue';
 import { useImportAnalysis } from '../composables/useImportAnalysis';
+import { buildApiSurface } from '../utils/apiSurface';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 
@@ -50,6 +57,58 @@ const currentDetail = computed(() => (currentName.value ? doc.value?.detail?.[cu
  */
 const unresolved = computed(() => (doc.value?.shellPaths || []).filter((p) => p.bytes === null));
 
+/**
+ * The same shell paths, regrouped by what they are and how safe they are.
+ *
+ * Derived, not stored: every input has been in the saved document since the
+ * first version of this page, including the named specifiers. So this view
+ * costs no extra fetch and needs no rebuild to appear.
+ */
+const surface = computed(() => buildApiSurface(doc.value));
+
+/** Only the paths with something wrong with them; the default view of the tab. */
+const riskyPaths = computed(() => surface.value.paths.filter((p) => p.risk !== 'ok'));
+
+const showAllPaths = ref(false);
+
+const surfaceRows = computed(() => (showAllPaths.value ? surface.value.paths : riskyPaths.value));
+
+const riskHeaders = computed(() => [
+  {
+    name: 'risk', labelKey: 'extensionsCenter.importAnalysis.cols.risk', value: 'risk', sort: false
+  },
+  {
+    name: 'paths', labelKey: 'extensionsCenter.importAnalysis.cols.paths', value: 'paths', align: 'right', sort: ['paths']
+  },
+  {
+    name: 'imports', labelKey: 'extensionsCenter.importAnalysis.cols.totalImports', value: 'imports', align: 'right', sort: ['imports']
+  },
+  {
+    name: 'exts', labelKey: 'extensionsCenter.importAnalysis.cols.usedBy', value: 'exts', align: 'right', sort: ['exts']
+  },
+  {
+    name: 'meaning', labelKey: 'extensionsCenter.importAnalysis.cols.meaning', sort: false
+  },
+]);
+
+const exposureHeaders = computed(() => [
+  {
+    name: 'name', labelKey: 'extensionsCenter.importAnalysis.cols.extension', value: 'name', sort: ['name']
+  },
+  {
+    name: 'risky', labelKey: 'extensionsCenter.importAnalysis.cols.riskyPaths', value: 'risky', align: 'right', sort: ['risky']
+  },
+  {
+    name: 'paths', labelKey: 'extensionsCenter.importAnalysis.cols.paths', value: 'paths', align: 'right', sort: ['paths']
+  },
+  {
+    name: 'imports', labelKey: 'extensionsCenter.importAnalysis.cols.totalImports', value: 'imports', align: 'right', sort: ['imports']
+  },
+  {
+    name: 'specifiers', labelKey: 'extensionsCenter.importAnalysis.cols.symbols', value: 'specifiers', align: 'right', sort: ['specifiers']
+  },
+]);
+
 /** Totals across every extension, for the summary strip. */
 const summary = computed(() => {
   const totals = doc.value?.totals || [];
@@ -61,6 +120,8 @@ const summary = computed(() => {
     shellPaths: doc.value?.shellPaths?.length || 0,
     components: totals.reduce((sum, t) => sum + t.components, 0),
     external:   doc.value?.externalPkgs?.length || 0,
+    symbols:    surface.value.totals.distinctSpecifiers,
+    risky:      surface.value.totals.riskyPaths,
   };
 });
 
@@ -126,9 +187,12 @@ onMounted(() => analysis.load());
             { key: 'shellPaths', value: summary.shellPaths },
             { key: 'componentsImports', value: summary.components },
             { key: 'externalPkgs', value: summary.external },
+            { key: 'symbols', value: summary.symbols },
+            { key: 'riskyPaths', value: summary.risky, bad: summary.risky > 0 },
           ]"
           :key="item.key"
           class="stat"
+          :class="{ bad: item.bad }"
         >
           <span class="value">{{ item.value }}</span>
           <span class="label text-muted">{{ t(`extensionsCenter.importAnalysis.summary.${ item.key }`) }}</span>
@@ -152,6 +216,82 @@ onMounted(() => analysis.load());
             :rows="doc.totals"
             @select="showDetail"
           />
+        </Tab>
+
+        <Tab
+          name="surface"
+          :label="t('extensionsCenter.importAnalysis.tabs.surface')"
+          :weight="55"
+        >
+          <p class="text-muted hint">
+            {{ t('extensionsCenter.importAnalysis.surfaceDescription') }}
+          </p>
+
+          <SortableTable
+            :headers="riskHeaders"
+            :rows="surface.byRisk"
+            key-field="risk"
+            :table-actions="false"
+            :row-actions="false"
+            :search="false"
+            :paging="false"
+            no-rows-key="extensionsCenter.importAnalysis.empty"
+            class="risk-rollup"
+          >
+            <template #cell:risk="{ row }">
+              <span
+                class="risk"
+                :class="`risk-${ row.risk }`"
+              >{{ t(`extensionsCenter.importAnalysis.risk.${ row.risk }`) }}</span>
+            </template>
+
+            <template #cell:meaning="{ row }">
+              <span class="text-muted meaning">
+                {{ t(`extensionsCenter.importAnalysis.riskNote.${ row.risk }`) }}
+              </span>
+            </template>
+          </SortableTable>
+
+          <h4 class="rollup-title">
+            {{ t('extensionsCenter.importAnalysis.exposureTitle') }}
+          </h4>
+
+          <SortableTable
+            :headers="exposureHeaders"
+            :rows="surface.byExtension"
+            key-field="name"
+            :table-actions="false"
+            :row-actions="false"
+            :search="false"
+            :paging="false"
+            no-rows-key="extensionsCenter.importAnalysis.empty"
+            default-sort-by="risky"
+            :descending="true"
+            class="risk-rollup"
+          >
+            <template #cell:risky="{ row }">
+              <span :class="{ 'risk-private': row.risky > 0 }">{{ row.risky }}</span>
+            </template>
+          </SortableTable>
+
+          <Banner
+            v-if="!riskyPaths.length"
+            color="success"
+            :label="t('extensionsCenter.importAnalysis.noRisky')"
+          />
+
+          <h4 class="rollup-title">
+            {{ t('extensionsCenter.importAnalysis.pathsTitle') }}
+          </h4>
+
+          <div class="surface-toggle">
+            <Checkbox
+              v-model:value="showAllPaths"
+              :label="t('extensionsCenter.importAnalysis.showAllPaths', { count: surface.totals.shellPaths })"
+            />
+          </div>
+
+          <ApiSurfaceTable :rows="surfaceRows" />
         </Tab>
 
         <Tab
@@ -229,6 +369,8 @@ onMounted(() => analysis.load());
 </template>
 
 <style lang="scss" scoped>
+@import '../styles/severity';
+
 .import-analysis {
   padding-bottom: 40px;
 
@@ -248,6 +390,10 @@ onMounted(() => analysis.load());
     gap: 2px;
     padding: 12px 16px;
 
+    &.bad .value {
+      color: var(--error);
+    }
+
     .value {
       font-size: 22px;
       font-weight: 600;
@@ -256,6 +402,47 @@ onMounted(() => analysis.load());
     .label {
       font-size: 12px;
     }
+  }
+
+  // Same scale as ApiSurfaceTable — the rollup and the rows below it have to
+  // read as one thing, so the two colour maps are deliberately identical.
+  .risk {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .risk-private {
+    color: $critical-color;
+  }
+
+  .risk-internal {
+    color: $high-color;
+  }
+
+  .risk-file-suffix {
+    color: $medium-color;
+  }
+
+  .risk-ok {
+    color: var(--muted);
+    font-weight: normal;
+  }
+
+  .risk-rollup {
+    margin-bottom: 24px;
+  }
+
+  .rollup-title {
+    margin: 0 0 8px;
+  }
+
+  .meaning {
+    font-size: 12px;
+  }
+
+  .surface-toggle {
+    margin-bottom: 12px;
   }
 
   .source-note,

@@ -2,6 +2,7 @@
 import { defineComponent, PropType } from 'vue';
 
 import { AnalysisProgress, ProgressState } from '../types/analysis';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * Progress for a rebuild that is going to run for minutes.
@@ -11,6 +12,8 @@ import { AnalysisProgress, ProgressState } from '../types/analysis';
  */
 export default defineComponent({
   name: 'AnalysisProgressBar',
+
+  mixins: [i18nMixin],
 
   props: {
     progress: {

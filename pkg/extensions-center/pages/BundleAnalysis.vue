@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useStore } from 'vuex';
 import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
+import SortableTable from '@shell/components/SortableTable/index.vue';
 import Tabbed from '@shell/components/Tabbed/index.vue';
 import Tab from '@shell/components/Tabbed/Tab.vue';
 
@@ -11,7 +12,11 @@ import BundleExtensionDetail from '../components/BundleExtensionDetail.vue';
 import BundleOverviewTable from '../components/BundleOverviewTable.vue';
 import SectionHeader from '../components/SectionHeader.vue';
 import { useBundleAnalysis } from '../composables/useBundleAnalysis';
+import { BundleCause, SHELL_CAUSED } from '../utils/bundleCause';
 import { prettyBytes } from '../utils/bytes';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 
@@ -52,15 +57,78 @@ const leaking = computed(() => (doc.value?.extensions || []).filter((e) => e.lea
 const summary = computed(() => {
   const extensions = doc.value?.extensions || [];
   const published = extensions.filter((e) => e.pluginDir);
+  const totalBytes = published.reduce((sum, e) => sum + e.totalBundleBytes, 0);
+
+  // Disk-scaled before summing. Adding raw source bytes across bundles with
+  // ratios from 0.30 to 0.66 produces a number that is not a size of anything.
+  const shellCaused = published
+    .filter((e) => e.ratio !== null)
+    .reduce((sum, e) => sum + e.shellCausedBytes * (e.ratio || 0), 0);
 
   return {
-    extensions: extensions.length,
-    published:  published.length,
-    totalBytes: published.reduce((sum, e) => sum + e.totalBundleBytes, 0),
-    largest:    published.reduce((max, e) => Math.max(max, e.totalBundleBytes), 0),
-    leaking:    leaking.value.length,
+    extensions:     extensions.length,
+    published:      published.length,
+    totalBytes,
+    largest:        published.reduce((max, e) => Math.max(max, e.totalBundleBytes), 0),
+    leaking:        leaking.value.length,
+    shellCaused:    Math.round(shellCaused),
+    shellCausedPct: totalBytes ? Math.round((shellCaused / totalBytes) * 100) : 0,
   };
 });
+
+/**
+ * Cause totals across every analysed bundle.
+ *
+ * The estate answer to "what would fixing shell actually save". Per-extension
+ * numbers are each too small to argue with; the sum is not.
+ */
+const causeRollup = computed(() => {
+  const totals = new Map<BundleCause, { cause: BundleCause; bytes: number; packages: number; exts: number }>();
+
+  for (const ext of doc.value?.extensions || []) {
+    if (!ext.byCause || ext.ratio === null) {
+      continue;
+    }
+
+    for (const row of ext.byCause) {
+      const total = totals.get(row.cause) || {
+        cause: row.cause, bytes: 0, packages: 0, exts: 0
+      };
+
+      total.bytes += row.bytes * ext.ratio;
+      // Packages are summed across extensions rather than deduplicated: the
+      // question this table answers is how much work there is in total, and
+      // the same polyfill in ten bundles is ten copies being downloaded.
+      total.packages += row.packages;
+      total.exts++;
+      totals.set(row.cause, total);
+    }
+  }
+
+  return [...totals.values()]
+    .map((t) => ({
+      ...t, bytes: Math.round(t.bytes), shellCaused: SHELL_CAUSED.has(t.cause)
+    }))
+    .sort((a, b) => b.bytes - a.bytes);
+});
+
+const causeHeaders = computed(() => [
+  {
+    name: 'cause', labelKey: 'extensionsCenter.bundleAnalysis.cols.cause', value: 'cause', sort: ['cause']
+  },
+  {
+    name: 'bytes', labelKey: 'extensionsCenter.bundleAnalysis.cols.shippedSize', value: 'bytes', align: 'right', sort: ['bytes']
+  },
+  {
+    name: 'exts', labelKey: 'extensionsCenter.bundleAnalysis.cols.extension', value: 'exts', align: 'right', sort: ['exts']
+  },
+  {
+    name: 'packages', labelKey: 'extensionsCenter.bundleAnalysis.cols.packages', value: 'packages', align: 'right', sort: ['packages']
+  },
+  {
+    name: 'fix', labelKey: 'extensionsCenter.bundleAnalysis.cols.fix', sort: false
+  },
+]);
 
 /**
  * Follow an extension name from the overview or leaks table into its breakdown.
@@ -139,6 +207,13 @@ onMounted(() => analysis.load());
           <span class="value">{{ summary.leaking }}</span>
           <span class="label text-muted">{{ t('extensionsCenter.bundleAnalysis.summary.leaking') }}</span>
         </div>
+        <div class="stat">
+          <span class="value">
+            {{ prettyBytes(summary.shellCaused) }}
+            <span class="pct text-muted">{{ summary.shellCausedPct }}%</span>
+          </span>
+          <span class="label text-muted">{{ t('extensionsCenter.bundleAnalysis.summary.shellCaused') }}</span>
+        </div>
       </div>
 
       <p class="text-muted source-note">
@@ -158,6 +233,45 @@ onMounted(() => analysis.load());
             :rows="doc.extensions"
             @select="showDetail"
           />
+        </Tab>
+
+        <Tab
+          name="cause"
+          :label="t('extensionsCenter.bundleAnalysis.tabs.cause')"
+          :weight="25"
+        >
+          <p class="text-muted hint">
+            {{ t('extensionsCenter.bundleAnalysis.causeDescription') }}
+          </p>
+
+          <SortableTable
+            :headers="causeHeaders"
+            :rows="causeRollup"
+            key-field="cause"
+            :table-actions="false"
+            :row-actions="false"
+            :search="false"
+            :paging="false"
+            no-rows-key="extensionsCenter.bundleAnalysis.empty"
+            default-sort-by="bytes"
+            :descending="true"
+          >
+            <template #cell:cause="{ row }">
+              <span :class="{ 'shell-caused': row.shellCaused }">
+                {{ t(`extensionsCenter.bundleAnalysis.cause.${ row.cause }`) }}
+              </span>
+            </template>
+
+            <template #cell:bytes="{ row }">
+              {{ prettyBytes(row.bytes) }}
+            </template>
+
+            <template #cell:fix="{ row }">
+              <span class="text-muted fix">
+                {{ t(`extensionsCenter.bundleAnalysis.causeFix.${ row.cause }`) }}
+              </span>
+            </template>
+          </SortableTable>
         </Tab>
 
         <Tab
@@ -238,6 +352,20 @@ onMounted(() => analysis.load());
     .label {
       font-size: 12px;
     }
+
+    .pct {
+      font-size: 13px;
+      font-weight: normal;
+    }
+  }
+
+  // Weight, not colour — see the same rule in BundleExtensionDetail.
+  .shell-caused {
+    font-weight: 600;
+  }
+
+  .fix {
+    font-size: 12px;
   }
 
   .source-note,

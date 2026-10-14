@@ -1,0 +1,87 @@
+/**
+ * The severity palette.
+ *
+ * Severity is the one place an extension is allowed a palette of its own:
+ * shell ships no severity tokens, so inventing a scale here would mean every
+ * SUSE product showing a different red for "critical". These are SUSE
+ * Security's values (`rancher/security-ui-exts`,
+ * `pkg/vulnerability-scanner/styles/_variables.scss`), reused verbatim.
+ *
+ * Variables and mixins only — this file emits no CSS of its own, so it is safe
+ * to pull into every component's scoped block. The runtime custom properties
+ * live in `severity-theme.scss`, which is loaded exactly once.
+ *
+ * Consumed with `@import`, not `@use`, even though `@use` is the modern form.
+ * Shell's `vue.config.js` prepends three `@import`s to every style block it
+ * compiles, and `@use` is only legal before any other rule — so in an
+ * extension `@use` cannot be reached. Revisit when shell's `additionalData`
+ * moves to `@use`.
+ */
+
+// Base palette
+$dark-red:        #A30000;
+$red:             #E03231;
+$orange:          #FD8D0D;
+$yellow:          #FADA38;
+$light-gray:      #C3C6D5;
+$dark-gray:       #4A4B52;
+$very-light-gray: #DDDEE7;
+
+// Severity
+$critical-color: $dark-red;
+$high-color:     $red;
+$medium-color:   $orange;
+$low-color:      $yellow;
+$na-color:       $light-gray;
+
+/**
+ * Ink on the three saturated severities. 90% rather than pure white so it does
+ * not glare against the dark red.
+ */
+$on-severity: rgba(255, 255, 255, 0.9);
+
+/**
+ * Ink on the two pale ones.
+ *
+ * Low (yellow) and unknown (light grey) never take white text — the contrast
+ * fails outright. This is the only ink that goes on them, which is the single
+ * easiest thing to get wrong here.
+ */
+$low-na-text: $dark-gray;
+
+// Empty segments in a severity bar, which have to work in both themes.
+$zero-color-light: $very-light-gray;
+$zero-color-dark:  $dark-gray;
+
+/** Ordered critical → high → medium → low → unknown, as everywhere else. */
+$severity-colors: (
+  'critical': $critical-color,
+  'high':     $high-color,
+  'medium':   $medium-color,
+  'low':      $low-color,
+  'unknown':  $na-color,
+);
+
+/**
+ * Fill the current element by severity modifier class.
+ *
+ * A mixin rather than five hand-written pairs per component, because the badge,
+ * the strip and the tiles all need the same background-and-ink pairing, and
+ * getting the ink wrong on low or unknown is the mistake worth designing out.
+ */
+@mixin severity-fill($prefix: '') {
+  &.#{$prefix}critical { background: $critical-color; color: $on-severity; }
+  &.#{$prefix}high     { background: $high-color;     color: $on-severity; }
+  &.#{$prefix}medium   { background: $medium-color;   color: $on-severity; }
+  &.#{$prefix}low      { background: $low-color;      color: $low-na-text; }
+  &.#{$prefix}unknown  { background: $na-color;       color: $low-na-text; }
+}
+
+/** The same scale as a single coloured edge, for tiles and rules. */
+@mixin severity-accent($prefix: '', $property: border-left-color) {
+  &.#{$prefix}critical { #{$property}: $critical-color; }
+  &.#{$prefix}high     { #{$property}: $high-color; }
+  &.#{$prefix}medium   { #{$property}: $medium-color; }
+  &.#{$prefix}low      { #{$property}: $low-color; }
+  &.#{$prefix}unknown  { #{$property}: $na-color; }
+}

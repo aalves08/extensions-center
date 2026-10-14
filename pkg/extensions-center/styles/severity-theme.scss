@@ -1,0 +1,18 @@
+/**
+ * The severity palette as CSS custom properties.
+ *
+ * Needed only where a colour is picked by key at *runtime* rather than by
+ * class, which here is the chart alone: chart.js takes colours as strings and
+ * cannot be styled with CSS. Everything else selects on a `sev-*` class and
+ * reads the SCSS variables directly.
+ *
+ * This file emits CSS, so it is imported from exactly one unscoped block
+ * (`SeverityChart.vue`). Importing it anywhere else duplicates the rule.
+ */
+@import './severity';
+
+:root {
+  @each $name, $color in $severity-colors {
+    --cve-#{$name}: #{$color};
+  }
+}

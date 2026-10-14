@@ -5,6 +5,7 @@ import SortableTable from '@shell/components/SortableTable/index.vue';
 import { ExtensionImportDetail, ExtensionImportPath } from '../types/analysis';
 import { TableHeader } from '../types/table';
 import { prettyBytes } from '../utils/bytes';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * One extension's imports, broken out by where they point.
@@ -16,6 +17,8 @@ import { prettyBytes } from '../utils/bytes';
  */
 export default defineComponent({
   name: 'ExtensionImportDetailView',
+
+  mixins: [i18nMixin],
 
   components: { SortableTable },
 

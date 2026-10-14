@@ -5,6 +5,7 @@ import { BadgeState } from '@components/BadgeState';
 
 import { KnownRepo } from '../types/repos';
 import { TableHeader } from '../types/table';
+import { i18nMixin } from '../utils/i18n';
 
 /**
  * Known extension repos, community and official.
@@ -14,6 +15,8 @@ import { TableHeader } from '../types/table';
  */
 export default defineComponent({
   name: 'KnownReposTable',
+
+  mixins: [i18nMixin],
 
   components: { BadgeState, SortableTable },
 

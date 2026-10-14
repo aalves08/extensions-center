@@ -211,6 +211,17 @@ export const SECURITY_CONCURRENCY = 8;
  */
 export const SECURITY_BUCKET_DAYS = 7;
 
+/**
+ * How long a loaded repo stays good for.
+ *
+ * Held in memory only: the point is that leaving the page and coming back does
+ * not throw away a minute of work, not that the data survives a reload.
+ * Fifteen minutes is longer than a visit and far shorter than a working day,
+ * so nobody reads yesterday's numbers believing they are current — and
+ * `lastRefreshed` is on screen either way.
+ */
+export const SECURITY_CACHE_TTL_MINUTES = 15;
+
 /** How many rows the dashboard summary tables show */
 export const DASHBOARD_ROW_LIMIT = 10;
 
@@ -313,8 +324,11 @@ export const KNOWN_REPOS_CACHE_VERSION = 2;
  * Same contract as `KNOWN_REPOS_CACHE_VERSION`: bump when the document shape
  * changes and the stored copy is discarded rather than half-read.
  */
-export const IMPORT_ANALYSIS_CACHE_VERSION = 1;
-export const BUNDLE_ANALYSIS_CACHE_VERSION = 1;
+// 2: `inManifest` on every row, and siblings discovered from `pkg/`.
+export const IMPORT_ANALYSIS_CACHE_VERSION = 2;
+// 2: per-package `cause` and `versions`, plus the source-to-disk `ratio`.
+// 3: `inManifest` on every row, and siblings discovered from `pkg/`.
+export const BUNDLE_ANALYSIS_CACHE_VERSION = 3;
 
 /**
  * Days before an analysis document is called stale.

@@ -8,11 +8,18 @@ import Tabbed from '@shell/components/Tabbed/index.vue';
 import Tab from '@shell/components/Tabbed/Tab.vue';
 
 import AnalysisProgressBar from '../components/AnalysisProgressBar.vue';
+import ReachTable from '../components/ReachTable.vue';
 import SecurityRepoPanel from '../components/SecurityRepoPanel.vue';
 import SectionHeader from '../components/SectionHeader.vue';
+import SeverityAmountBar from '../components/SeverityAmountBar.vue';
+import { useBundleAnalysis } from '../composables/useBundleAnalysis';
 import { useRepoSecurity } from '../composables/useRepoSecurity';
 import { RancherStore } from '../types/rancher';
-import { SecurityTarget, SEVERITIES } from '../types/security';
+import { RepoSecurity, SecurityTarget, SEVERITIES } from '../types/security';
+import { buildReach } from '../utils/vulnReach';
+import { useTranslation } from '../utils/i18n';
+
+const t = useTranslation();
 
 type Done = (ok: boolean) => void;
 
@@ -23,6 +30,12 @@ defineOptions({ name: 'SecurityOverview' });
 const store = useStore() as unknown as RancherStore;
 const route = useRoute();
 const security = useRepoSecurity(store);
+
+// Read-only here. The reach view consumes whatever Bundle Analysis last
+// persisted and never triggers a rebuild of it: that is a multi-minute,
+// hundred-megabyte job and it belongs behind its own page's explicit button,
+// not behind opening a tab.
+const bundles = useBundleAnalysis(store);
 
 /** The one thing this page drives on shell's Tabbed: jumping to a named tab. */
 interface TabbedApi {
@@ -37,9 +50,16 @@ interface TabbedApi {
  */
 const ROLLUP = 'all-repos';
 
+/** Tab id of the cross-repo reach view. Same constraints as `ROLLUP`. */
+const REACH = 'by-package';
+
 const tabbed = ref<TabbedApi | null>(null);
 const activeTab = ref(ROLLUP);
-const rollupLoaded = ref(false);
+
+// Owned by the composable, not the page: it has to survive the page being
+// unmounted, or returning to a loaded estate shows the "this costs a minute"
+// prompt over a table that is already filled in.
+const rollupLoaded = security.rollupLoaded;
 
 /**
  * The tab the URL asked for, captured here in setup and nowhere later.
@@ -56,6 +76,22 @@ const rollup = computed(() => security.rollup());
 const severities = SEVERITIES;
 
 /**
+ * Vulnerable packages crossed against what the published bundles contain.
+ *
+ * Built from whatever repos are loaded rather than requiring all of them, so
+ * the tab is useful after one repo and complete after the estate button. The
+ * header says how many went into it, because a reach table over three repos
+ * and one over sixteen look identical and mean very different things.
+ */
+const reach = computed(() => {
+  const repos = Object.values(security.loaded.value) as RepoSecurity[];
+
+  return buildReach(repos, bundles.doc.value);
+});
+
+const reachRepos = computed(() => Object.keys(security.loaded.value).length);
+
+/**
  * "Last refreshed" for whatever is on screen.
  *
  * Per-tab rather than per-page: tabs are loaded one at a time and on demand, so
@@ -63,8 +99,10 @@ const severities = SEVERITIES;
  * opened.
  */
 const lastRefreshed = computed(() => {
-  if (activeTab.value === ROLLUP) {
-    return rollupLoaded.value ? security.lastRefreshed() : null;
+  // The reach tab is a view over everything already loaded, so it is exactly
+  // as current as the oldest of them — the same answer the estate gives.
+  if (activeTab.value === ROLLUP || activeTab.value === REACH) {
+    return rollupLoaded.value || activeTab.value === REACH ? security.lastRefreshed() : null;
   }
 
   return security.lastRefreshed([activeTab.value]);
@@ -83,7 +121,7 @@ const busy = computed(() => {
 async function onTabChange(e: { selectedName: string }) {
   activeTab.value = e.selectedName;
 
-  if (e.selectedName === ROLLUP) {
+  if (e.selectedName === ROLLUP || e.selectedName === REACH) {
     return;
   }
 
@@ -117,14 +155,14 @@ async function loadRollup(done?: Done) {
 
   rollupLoaded.value = true;
 
-  await security.loadTargets();
+  await security.loadTargets(force);
   await security.loadAll(force);
 
   done?.(true);
 }
 
 async function refresh(done?: Done) {
-  await security.loadTargets();
+  await security.loadTargets(true);
 
   const target = security.targets.value.find((t) => t.id === activeTab.value);
 
@@ -146,6 +184,12 @@ function tabLabel(target: SecurityTarget): string {
 }
 
 onMounted(async() => {
+  // One ConfigMap read, no GitHub traffic. Unconditional because the reach tab
+  // has to be able to say "bundle analysis has never been run" as distinct
+  // from "nothing vulnerable ships", and those look identical until this
+  // returns.
+  bundles.load();
+
   await security.loadTargets();
 
   if (!linkedTab || linkedTab === activeTab.value || !security.targets.value.some((t) => t.id === linkedTab)) {
@@ -260,12 +304,8 @@ onMounted(async() => {
               <tr>
                 <th>{{ t('extensionsCenter.security.cols.repo') }}</th>
                 <th>{{ t('extensionsCenter.security.cols.source') }}</th>
-                <th
-                  v-for="severity in severities"
-                  :key="severity"
-                  class="num"
-                >
-                  {{ t(`extensionsCenter.security.severity.${ severity }`) }}
+                <th class="bar-col">
+                  {{ t('extensionsCenter.security.cols.vulnerabilities') }}
                 </th>
                 <th class="num">
                   {{ t('extensionsCenter.security.cols.total') }}
@@ -285,12 +325,15 @@ onMounted(async() => {
                   <span class="text-muted repo-id">{{ repo.repo }}</span>
                 </td>
                 <td>{{ t(`extensionsCenter.security.source.${ repo.source }`) }}</td>
-                <td
-                  v-for="severity in severities"
-                  :key="severity"
-                  class="num"
-                >
-                  {{ repo.error ? '—' : repo.counts[severity] }}
+                <td class="bar-col">
+                  <SeverityAmountBar
+                    v-if="!repo.error"
+                    :counts="repo.counts"
+                  />
+                  <span
+                    v-else
+                    class="text-muted"
+                  >{{ t('extensionsCenter.common.na') }}</span>
                 </td>
                 <td class="num">
                   {{ repo.error ? '—' : repo.openTotal }}
@@ -298,6 +341,53 @@ onMounted(async() => {
               </tr>
             </tbody>
           </table>
+        </template>
+      </Tab>
+
+      <Tab
+        name="by-package"
+        :label="t('extensionsCenter.security.reach.tab')"
+        :weight="99"
+      >
+        <p class="text-muted reach-intro">
+          {{ t('extensionsCenter.security.reach.explain') }}
+        </p>
+
+        <!--
+          Two different empty states, deliberately. "No bundle analysis" is a
+          missing input and has an action; "no repos loaded" is a missing
+          input the user supplies from the previous tab. Collapsing them into
+          one "nothing to show" would send people looking in the wrong place.
+        -->
+        <Banner
+          v-if="!bundles.doc.value"
+          color="info"
+          :label="t('extensionsCenter.security.reach.noBundles')"
+        />
+        <Banner
+          v-else-if="!reachRepos"
+          color="info"
+          :label="t('extensionsCenter.security.reach.noRepos')"
+        />
+
+        <template v-else>
+          <div class="reach-summary">
+            <span>{{ t('extensionsCenter.security.reach.scope', { repos: reachRepos, bundles: reach.bundlesJoined }) }}</span>
+            <span class="reach-stat confirmed">
+              <strong>{{ reach.confirmed }}</strong>
+              {{ t('extensionsCenter.security.reach.stats.confirmed') }}
+            </span>
+            <span class="reach-stat unconfirmed">
+              <strong>{{ reach.unconfirmed }}</strong>
+              {{ t('extensionsCenter.security.reach.stats.unconfirmed') }}
+            </span>
+            <span class="reach-stat">
+              <strong>{{ reach.notShipped }}</strong>
+              {{ t('extensionsCenter.security.reach.stats.notShipped') }}
+            </span>
+          </div>
+
+          <ReachTable :rows="reach.rows" />
         </template>
       </Tab>
 
@@ -318,6 +408,8 @@ onMounted(async() => {
 </template>
 
 <style lang="scss" scoped>
+@import '../styles/severity';
+
 .security {
   // The tab body starts hard against the tab strip, so the button needs its
   // own breathing room rather than borrowing the paragraph's.
@@ -327,6 +419,42 @@ onMounted(async() => {
     p {
       margin: 0 0 12px;
       max-width: 70ch;
+    }
+  }
+
+  .reach-intro {
+    margin: 16px 0;
+    max-width: 90ch;
+  }
+
+  .reach-summary {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 12px;
+    gap: 20px;
+    margin-bottom: 12px;
+  }
+
+  .reach-stat {
+    align-items: baseline;
+    display: flex;
+    gap: 4px;
+
+    strong {
+      font-size: 18px;
+    }
+
+    // Same 3px rule as the estate tiles, for the same reason: the number is
+    // the message and the colour only sorts it.
+    border-bottom: 3px solid var(--border);
+
+    &.confirmed {
+      border-bottom-color: $critical-color;
+    }
+
+    &.unconfirmed {
+      border-bottom-color: $na-color;
     }
   }
 
@@ -371,10 +499,7 @@ onMounted(async() => {
     // the label beside it, so colour is reinforcement, not the message.
     border-bottom: 3px solid var(--border);
 
-    &.sev-critical { border-bottom-color: var(--error); }
-    &.sev-high { border-bottom-color: var(--warning); }
-    &.sev-medium { border-bottom-color: var(--info); }
-    &.sev-low { border-bottom-color: var(--muted); }
+    @include severity-accent('sev-', border-bottom-color);
   }
 
   .estate-table {
@@ -396,6 +521,14 @@ onMounted(async() => {
 
     .num {
       text-align: right;
+    }
+
+    // Wide enough that five segments each stay legible with a four-digit count
+    // in them, and fixed so the strips line up down the column — which is the
+    // only reason the bar beats five columns of numbers.
+    .bar-col {
+      min-width: 260px;
+      width: 30%;
     }
 
     .repo-id {

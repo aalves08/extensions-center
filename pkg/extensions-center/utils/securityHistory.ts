@@ -1,6 +1,24 @@
 import { Advisory, SeveritySeries, SEVERITIES } from '../types/security';
+import { emptyCounts } from './severity';
 
 const DAY_MS = 86_400_000;
+
+/**
+ * A series with one band per severity.
+ *
+ * Built from `SEVERITIES` rather than written out, so widening the scale
+ * cannot silently leave one of this file's three construction sites behind —
+ * which is exactly what adding `unknown` would otherwise have done.
+ */
+function emptySeries(dates: string[] = [], length = 0): SeveritySeries {
+  const series = { dates } as SeveritySeries;
+
+  for (const severity of SEVERITIES) {
+    series[severity] = length ? new Array(length).fill(0) : [];
+  }
+
+  return series;
+}
 
 /** `YYYY-MM-DD` for a timestamp, in UTC so a bucket does not shift with the viewer. */
 function isoDay(ms: number): string {
@@ -37,9 +55,7 @@ export function buildHistory(advisories: Advisory[], bucketDays: number): Severi
   const start = Math.floor(earliest / bucketMs) * bucketMs;
   const end = Date.now();
 
-  const series: SeveritySeries = {
-    dates: [], critical: [], high: [], medium: [], low: [],
-  };
+  const series = emptySeries();
 
   // Pre-parsed, because the inner loop runs once per alert per bucket and a
   // seven-year weekly series over a thousand alerts is 360k iterations —
@@ -54,9 +70,7 @@ export function buildHistory(advisories: Advisory[], bucketDays: number): Severi
   for (let at = start; at <= end; at += bucketMs) {
     series.dates.push(isoDay(at));
 
-    const counts = {
-      critical: 0, high: 0, medium: 0, low: 0,
-    };
+    const counts = emptyCounts();
 
     for (const alert of parsed) {
       if (alert.from <= at && alert.until > at) {
@@ -85,13 +99,7 @@ export function sumSeries(all: SeveritySeries[]): SeveritySeries | null {
   // exist yet had no open alerts, which is the honest reading.
   const longest = usable.reduce((a, b) => (a.dates.length >= b.dates.length ? a : b));
 
-  const out: SeveritySeries = {
-    dates:    [...longest.dates],
-    critical: new Array(longest.dates.length).fill(0),
-    high:     new Array(longest.dates.length).fill(0),
-    medium:   new Array(longest.dates.length).fill(0),
-    low:      new Array(longest.dates.length).fill(0),
-  };
+  const out = emptySeries([...longest.dates], longest.dates.length);
 
   for (const series of usable) {
     const offset = out.dates.length - series.dates.length;
@@ -115,11 +123,11 @@ export function trimSeries(series: SeveritySeries, days: number, bucketDays: num
   const keep = Math.min(series.dates.length, Math.ceil(days / bucketDays));
   const from = series.dates.length - keep;
 
-  return {
-    dates:    series.dates.slice(from),
-    critical: series.critical.slice(from),
-    high:     series.high.slice(from),
-    medium:   series.medium.slice(from),
-    low:      series.low.slice(from),
-  };
+  const out = emptySeries(series.dates.slice(from));
+
+  for (const severity of SEVERITIES) {
+    out[severity] = series[severity].slice(from);
+  }
+
+  return out;
 }

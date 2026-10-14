@@ -1,20 +1,25 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
 import SortableTable from '@shell/components/SortableTable/index.vue';
+import Tag from '@shell/components/Tag.vue';
 
 import { OfficialRepo } from '../types/repos';
 import { TableHeader } from '../types/table';
+import { i18nMixin } from '../utils/i18n';
 
 /**
- * The upstream official extension repos from the ui-plugin-charts manifest.
+ * The upstream official extensions from the ui-plugin-charts manifest.
  *
- * The name links out to the repo, per the row-title behaviour these tables use
- * everywhere else in the extension.
+ * One row per extension, not per repo — several rows can link to the same
+ * repository. The name links out to it, per the row-title behaviour these
+ * tables use everywhere else in the extension.
  */
 export default defineComponent({
   name: 'OfficialReposTable',
 
-  components: { SortableTable },
+  mixins: [i18nMixin],
+
+  components: { SortableTable, Tag },
 
   props: {
     rows: {
@@ -77,7 +82,7 @@ export default defineComponent({
     >
       <template #cell:name="{ row }">
         <a
-          v-clean-tooltip="row.id"
+          v-clean-tooltip="row.repo"
           :href="row.repoUrl"
           target="_blank"
           rel="noopener noreferrer"
@@ -85,6 +90,13 @@ export default defineComponent({
           {{ row.name }}
           <i class="icon icon-external-link" />
         </a>
+        <Tag
+          v-if="!row.inManifest"
+          v-clean-tooltip="t('extensionsCenter.common.unlistedTooltip')"
+          class="unlisted"
+        >
+          {{ t('extensionsCenter.common.unlisted') }}
+        </Tag>
         <i
           v-if="row.error"
           v-clean-tooltip="row.error"
@@ -158,6 +170,11 @@ export default defineComponent({
 
   .icon-warning {
     margin-left: 4px;
+  }
+
+  .unlisted {
+    margin-left: 6px;
+    white-space: nowrap;
   }
 
   // `:has()` walks from our marker back up to the row it sits in, which is the

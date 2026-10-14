@@ -24,6 +24,7 @@ import { parseImports } from '../utils/importParser';
 import { useAnalysisCache, isAnalysisStale } from './useAnalysisCache';
 import { resolveTargets } from './useAnalysisTargets';
 import { useGitHubApi, describeGitHubError } from './useGitHubApi';
+import { clearRepoLayoutCache } from './useRepoExtensions';
 
 /**
  * What every official extension imports, read from its source at the latest
@@ -65,11 +66,16 @@ function isSourceFile(path: string): boolean {
 /**
  * Where an extension's own code lives inside its repo.
  *
+ * The fallback only. `resolveTargets` normally reads the repo's `pkg/`
+ * directory and hands over exact roots — including the shared private
+ * directories a monorepo's siblings each bundle a copy of, which guessing from
+ * the tree could never find. This runs when that read failed, and infers a root
+ * from paths already in the tree rather than probing over the network.
+ *
  * Extension repos are not laid out consistently — most use `pkg/<name>/`, some
  * underscore the name, a couple use `packages/` or a bare `src/`. Picking the
  * wrong root would either scan the repo's own test harness and tooling or find
- * nothing at all, so this infers it from paths already in the tree rather than
- * probing directories over the network.
+ * nothing at all.
  */
 function findExtensionRoot(paths: string[], extName: string): string {
   const candidates = [
@@ -163,6 +169,7 @@ export function useImportAnalysis(store: RancherStore) {
       name:             target.name,
       repo:             target.repo,
       semver:           target.semver,
+      inManifest:       target.inManifest,
       fileCount:        0,
       shell:            0,
       components:       0,
@@ -198,8 +205,8 @@ export function useImportAnalysis(store: RancherStore) {
     }
 
     const allPaths = tree.tree.filter((e) => e.type === 'blob').map((e) => e.path);
-    const root = findExtensionRoot(allPaths, target.name);
-    const files = allPaths.filter((p) => p.startsWith(root) && isSourceFile(p));
+    const roots = target.sourceRoots.length ? target.sourceRoots : [findExtensionRoot(allPaths, target.name)];
+    const files = allPaths.filter((p) => roots.some((root) => p.startsWith(root)) && isSourceFile(p));
 
     if (!files.length) {
       return {
@@ -275,6 +282,11 @@ export function useImportAnalysis(store: RancherStore) {
     };
 
     try {
+      // An explicit refresh re-reads each repo's `pkg/` layout too. A sibling
+      // extension added since the last rebuild should appear without needing a
+      // browser reload.
+      clearRepoLayoutCache();
+
       const targets = await resolveTargets(store);
 
       // Every shell and components file in one request, with sizes. Doing this

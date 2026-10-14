@@ -3,6 +3,7 @@ import { defineComponent, markRaw, PropType } from 'vue';
 import { Chart, registerables } from 'chart.js';
 
 import { SeveritySeries, SEVERITIES, Severity } from '../types/security';
+import { i18nMixin } from '../utils/i18n';
 
 Chart.register(...registerables);
 
@@ -13,19 +14,23 @@ interface Data {
 }
 
 /**
- * Which theme variable each severity is drawn in.
+ * Which custom property each severity is drawn in.
  *
- * The dashboard's own status colours rather than a palette of our own, so a
- * critical line here is the same red as a critical anything else in Rancher
- * and both themes are handled by the shell. `low` takes the muted ink: it is
- * deliberately not `--success`, because a low-severity vulnerability is still
- * a vulnerability and a green line would read as "this is fine".
+ * chart.js takes colours as strings, so this is the one consumer of the
+ * severity palette that cannot select on a class — hence the `--cve-*`
+ * properties, registered by the unscoped block below. The fallbacks are the
+ * same values and exist only so a line is never drawn in chart.js's default
+ * blue if the stylesheet has not landed yet.
+ *
+ * No green anywhere on the scale: a low-severity vulnerability is still a
+ * vulnerability, and a green line would read as "this is fine".
  */
 const SEVERITY_VARS: Record<Severity, { name: string; fallback: string }> = {
-  critical: { name: '--error', fallback: '#f64747' },
-  high:     { name: '--warning', fallback: '#dac342' },
-  medium:   { name: '--info', fallback: '#3d98d3' },
-  low:      { name: '--muted', fallback: '#6c6c76' },
+  critical: { name: '--cve-critical', fallback: '#A30000' },
+  high:     { name: '--cve-high', fallback: '#E03231' },
+  medium:   { name: '--cve-medium', fallback: '#FD8D0D' },
+  low:      { name: '--cve-low', fallback: '#FADA38' },
+  unknown:  { name: '--cve-unknown', fallback: '#C3C6D5' },
 };
 
 /**
@@ -39,6 +44,8 @@ const SEVERITY_VARS: Record<Severity, { name: string; fallback: string }> = {
  */
 export default defineComponent({
   name: 'SeverityChart',
+
+  mixins: [i18nMixin],
 
   props: {
     series: {
@@ -109,7 +116,7 @@ export default defineComponent({
           maintainAspectRatio: false,
           interaction:         { mode: 'index', intersect: false },
           plugins:             {
-            // The download chart has one series and so needs no legend. Four
+            // The download chart has one series and so needs no legend. Five
             // severities do, but it stays out of the plot area and wears the
             // same muted ink as the axis labels rather than competing with it.
             legend: {
@@ -150,6 +157,16 @@ export default defineComponent({
     </div>
   </section>
 </template>
+
+<!--
+  Unscoped, and imported in exactly this one place: it registers the `--cve-*`
+  properties that `SEVERITY_VARS` reads at runtime. Scoping it would rewrite
+  the selector to a data attribute and `getComputedStyle(document.body)` would
+  find nothing.
+-->
+<style lang="scss">
+@import '../styles/severity-theme';
+</style>
 
 <style lang="scss" scoped>
 // The card the NPM Metrics charts sit in, so the two pages match.

@@ -1,134 +1,217 @@
-<script lang="ts">
-import { defineComponent, PropType } from 'vue';
+<script setup lang="ts">
+import { computed } from 'vue';
 
 import { Severity, SEVERITIES } from '../types/security';
+import { useTranslation } from '../utils/i18n';
 import { ageInDays } from '../utils/severity';
+import SeverityAmountBar from './SeverityAmountBar.vue';
 
 /**
- * The severity tiles above a repo's table.
+ * The summary above a repo's table.
  *
- * Four counts plus two that matter more than they look. "No patch available"
- * is work that cannot be done by bumping a version, so it needs a different
- * decision; "oldest open" is the one number that says whether anything is
- * actually being acted on.
+ * One bordered strip with two blocks, not a row of cards: the severity
+ * breakdown and the two remediation numbers are the same summary read two
+ * ways, and boxing them separately makes them look like unrelated widgets.
+ *
+ * "No patch available" is work that cannot be done by bumping a version, so it
+ * needs a different decision; "oldest open" is the one number that says
+ * whether anything is actually being acted on.
  */
-export default defineComponent({
-  name: 'SecuritySummary',
+const props = withDefaults(defineProps<{
+  counts: Record<Severity, number>;
+  /** Open advisories across every severity, shown muted in the block header */
+  total?: number;
+  unpatched?: number;
+  oldest?: string | null;
+}>(), {
+  total: 0, unpatched: 0, oldest: null
+});
 
-  props: {
-    counts: {
-      type:     Object as PropType<Record<Severity, number>>,
-      required: true,
-    },
+const t = useTranslation();
 
-    unpatched: {
-      type:    Number,
-      default: 0,
-    },
+/**
+ * Labels under the bar, in the bar's own order.
+ *
+ * The strip prints counts but names its severities only in `title`, which is
+ * no use in greyscale or at a glance. One flex row with the same `flex: 1 0 0`
+ * as the segments lines the words up under the blocks they belong to.
+ */
+const legend = computed(() => SEVERITIES.map((severity) => ({
+  severity,
+  label: t(`extensionsCenter.security.severity.${ severity }`),
+})));
 
-    oldest: {
-      type:    String as PropType<string | null>,
-      default: null,
-    },
-  },
+/** Whole days, months or years — nobody reads "just over 431 days". */
+const oldestLabel = computed(() => {
+  const days = ageInDays(props.oldest);
 
-  computed: {
-    severities(): { severity: Severity; count: number }[] {
-      return SEVERITIES.map((severity) => ({ severity, count: this.counts[severity] }));
-    },
+  if (days === null) {
+    return t('extensionsCenter.common.na');
+  }
 
-    /** Whole days, months or years — nobody reads "just over 431 days". */
-    oldestLabel(): string {
-      const days = ageInDays(this.oldest);
+  if (days < 60) {
+    return t('extensionsCenter.security.age.days', { count: days });
+  }
 
-      if (days === null) {
-        return this.t('extensionsCenter.common.na');
-      }
+  if (days < 730) {
+    return t('extensionsCenter.security.age.months', { count: Math.floor(days / 30) });
+  }
 
-      if (days < 60) {
-        return this.t('extensionsCenter.security.age.days', { count: days });
-      }
-
-      if (days < 730) {
-        return this.t('extensionsCenter.security.age.months', { count: Math.floor(days / 30) });
-      }
-
-      return this.t('extensionsCenter.security.age.years', { count: Math.floor(days / 365) });
-    },
-  },
+  return t('extensionsCenter.security.age.years', { count: Math.floor(days / 365) });
 });
 </script>
 
 <template>
-  <div class="security-summary">
-    <div
-      v-for="entry in severities"
-      :key="entry.severity"
-      class="tile"
-      :class="`sev-${ entry.severity }`"
-    >
-      <span class="count">{{ entry.count }}</span>
-      <span class="label">{{ t(`extensionsCenter.security.severity.${ entry.severity }`) }}</span>
-    </div>
+  <div class="summary-section">
+    <section class="summary-block">
+      <h3 class="summary-title">
+        {{ t('extensionsCenter.security.summary.severityTitle') }}
+        <span class="summary-total text-muted">{{ total }}</span>
+      </h3>
 
-    <div class="tile secondary">
-      <span class="count">{{ unpatched }}</span>
-      <span class="label">{{ t('extensionsCenter.security.tiles.unpatched') }}</span>
-    </div>
+      <div class="bar-group">
+        <SeverityAmountBar :counts="counts" />
 
-    <div class="tile secondary">
-      <span class="count small">{{ oldestLabel }}</span>
-      <span class="label">{{ t('extensionsCenter.security.tiles.oldest') }}</span>
-    </div>
+        <div class="legend">
+          <span
+            v-for="entry in legend"
+            :key="entry.severity"
+            class="legend-item"
+          >{{ entry.label }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="summary-block">
+      <h3 class="summary-title">
+        {{ t('extensionsCenter.security.summary.remediationTitle') }}
+      </h3>
+
+      <!--
+        Only `unpatched` is ever coloured, and only when it is non-zero. An age
+        is not a failure, and colouring both would leave neither reading as the
+        exception.
+      -->
+      <div class="stats">
+        <div class="stat">
+          <div
+            class="stat-value"
+            :class="{ 'text-error': unpatched > 0 }"
+          >
+            {{ unpatched }}
+          </div>
+          <div class="stat-label">
+            {{ t('extensionsCenter.security.tiles.unpatched') }}
+          </div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-value">
+            {{ oldestLabel }}
+          </div>
+          <div class="stat-label">
+            {{ t('extensionsCenter.security.tiles.oldest') }}
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.security-summary {
+.summary-section {
+  align-items: stretch;
+  border: var(--border-width) solid var(--input-border);
+  border-radius: 6px;
   display: flex;
-  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.summary-block {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
   gap: 12px;
-  margin-bottom: 16px;
+  min-width: 0;
+  padding: 16px;
 
-  .tile {
-    background: var(--box-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    display: flex;
-    flex: 1 1 110px;
+  // The portable divider: no child needs to know it is not the first.
+  & + & {
+    border-left: var(--border-width) solid var(--input-border);
+  }
+}
+
+.summary-title {
+  align-items: center;
+  display: flex;
+  font-size: 18px;
+  font-weight: 400;
+  gap: 8px;
+  line-height: 21px;
+  margin: 0;
+}
+
+.summary-total {
+  font-size: 14px;
+  margin-left: auto;
+}
+
+.bar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+// Same basis as the bar's segments, so each word sits under its own block.
+.legend {
+  display: flex;
+}
+
+.legend-item {
+  color: var(--disabled-text);
+  flex: 1 0 0;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.stats {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 32px;
+  justify-content: space-between;
+}
+
+.stat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 36px;
+}
+
+.stat-label {
+  color: var(--disabled-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+@media (max-width: 1200px) {
+  .summary-section {
     flex-direction: column;
-    gap: 2px;
-    padding: 12px 16px;
-
-    // A 4px rule carries the severity rather than tinting the whole tile:
-    // four saturated blocks side by side is a traffic light, not a summary.
-    border-left-width: 4px;
   }
 
-  .sev-critical { border-left-color: var(--error); }
-  .sev-high { border-left-color: var(--warning); }
-  .sev-medium { border-left-color: var(--info); }
-  .sev-low { border-left-color: var(--muted); }
-
-  .secondary {
-    border-left-color: var(--border);
-  }
-
-  .count {
-    font-size: 24px;
-    font-weight: 600;
-    line-height: 1.1;
-
-    &.small {
-      font-size: 18px;
-      // Keeps the baseline of "1y 2m" level with the plain numbers beside it.
-      padding: 3px 0;
-    }
-  }
-
-  .label {
-    color: var(--muted);
-    font-size: 12px;
+  .summary-block + .summary-block {
+    border-left: 0;
+    border-top: var(--border-width) solid var(--input-border);
   }
 }
 </style>
