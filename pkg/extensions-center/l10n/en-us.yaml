@@ -129,13 +129,23 @@ extensionsCenter:
     title: Official Extension Repos
     description: Repos listed in the rancher/ui-plugin-charts manifest.
     empty: No official extension repos found.
+    # This table sits in one half of the dashboard's two-up row, and six
+    # columns of unbroken header set its minimum width well past that. The
+    # breaks are explicit rather than left to wrapping: SortableTable marks
+    # header labels `text-no-break`, and a <br> is the one thing that still
+    # breaks under it. They pass through `v-clean-html`, which allows `br`.
     cols:
       name: Extension
-      headBranch: Head Branch
+      headBranch: Head<br>Branch
       shellVersion: '@rancher/shell'
-      componentsVersion: '@rancher/components'
-      publishedVersion: Published (gh-pages)
-      latestOfficial: Latest Official
+      componentsVersion: '@rancher/<br>components'
+      publishedVersion: Published<br>(gh-pages)
+      latestOfficial: Latest<br>Official
+    declaredTooltip: >-
+      The range declared in package.json on the head branch, not the version
+      the latest release ships. Shell is compiled into an extension's bundle,
+      so what shipped is whatever that release's lockfile resolved — the
+      Security page's Shell upgrade tab reads it from there.
     outOfSync: >-
       {published} is published on the extension's gh-pages branch, but the
       official charts still carry {official}.
@@ -191,6 +201,7 @@ extensionsCenter:
       targets: Resolving extension versions
       modules: Reading rancher/dashboard module sizes
       listing: Listing published assets
+      lockfiles: Reading extension lockfiles
       sources: Reading extension sources
       maps: Reading source maps
       saving: Saving results
@@ -299,6 +310,14 @@ extensionsCenter:
       symbols: Symbols
       noSymbols: Default or namespace import only — no named symbols.
       usedBy: Used by
+      importCount: |-
+        {count, plural,
+        one  {1 import}
+        other {# imports}
+        }
+      noUsage: >-
+        No per-extension breakdown was saved for this path. Refresh to rebuild
+        the analysis.
     cols:
       extension: Extension
       version: Version
@@ -573,6 +592,16 @@ extensionsCenter:
       No history for this repo. The chart is reconstructed from the dates
       Dependabot records against each alert, and public dependency data carries
       no such dates — it describes the tree as it stands today and nothing more.
+    cache:
+      stale: >-
+        This data is over a day old — see the timestamp above. Press Refresh to
+        re-read it.
+      overdue: >-
+        This data is more than {days} days old. Vulnerability counts change
+        daily, so re-read it before acting on anything below.
+      writeFailed: >-
+        Could not save this data, so the next visit will read it from scratch:
+        {message}
 
     severity:
       critical: Critical
@@ -615,19 +644,58 @@ extensionsCenter:
       remediationTitle: Remediation
 
     tiles:
-      unpatched: No patch available
       oldest: Oldest open
 
     filters:
       all: All
       severity: Severity
       scope: Scope
-      patch: Patch
-      hasPatch: Has a patch
-      noPatch: No patch available
+      triage: Next step
+      exposure: Exposure
+
+    # What has to happen next, which is the question the severity column cannot
+    # answer. `label` names the status in a cell or a filter, `short` labels a
+    # number in the summary strip, and `description` explains it on hover.
+    triage:
+      fix-ready:
+        label: Needs a PR
+        short: Need a PR
+        description: >-
+          A fixed version is published and no open pull request moves to it, so
+          nothing is in flight. This is the work.
+      in-review:
+        label: PR open
+        short: In review
+        description: >-
+          An open Dependabot pull request already bumps this package to the
+          fixed version or past it. It needs a reviewer, not a fix.
+      no-fix:
+        label: No fix yet
+        short: No fix yet
+        description: >-
+          The advisory has no published fixed version, so there is nothing to
+          upgrade to. Track it; it cannot be closed from here.
+
+    # Deliberately an annotation and never a filter default: this is read off
+    # the manifest path, and quietly hiding something that does reach a browser
+    # is the one mistake worth designing out.
+    exposure:
+      shipped:
+        label: Shipped
+      tooling:
+        label: Tooling
+      unknown:
+        label: Unknown
+      note: 'Build tooling — the alert is against {segment}/, which users never download.'
+
+    prError: >-
+      Could not read this repository's open pull requests, so no finding can be
+      shown as already in review and some below will overstate the work left:
+      {error}
 
     cols:
       package: Package
+      triage: Next step
       severity: Severity
       advisories: Advisories
       manifests: Manifests
@@ -680,6 +748,114 @@ extensionsCenter:
         unknown: Ships, unconfirmed
         miss: Not shipped
 
+    shellUpgrade:
+      tab: Shell upgrade
+      explain: >-
+        Extensions do not load @rancher/shell from Rancher at runtime — it is
+        compiled into each published bundle, so every release freezes a copy of
+        shell and of the versions shell pinned that day. That makes upgrading
+        shell a real fix, and this puts a number on it: what each extension
+        actually shipped, and how many of its open findings a bump would clear.
+      floor: >-
+        Counts are a floor, not a total. Shell declares its direct dependencies
+        only, so anything a bump clears deeper in the tree is not visible here.
+      target: 'Measured against @rancher/shell {version}'
+      includePrereleases: Include pre-releases
+      load: Read shipped shell versions
+      loading: Reading releases…
+      empty: No official extensions to measure.
+      noRepos: >-
+        No repositories have been read yet, so there are no findings to credit
+        a bump with. The versions and dropped dependencies below are still
+        accurate; open a repo tab or load the whole estate to fill in the rest.
+      cols:
+        extension: Extension
+        shipped: Shell shipped
+        cleared: Findings cleared
+        removed: Dependencies dropped
+      current: up to date
+      currentNote: 'This release already ships {version}, so there is nothing to gain.'
+      atLeast: 'at least {count}'
+      unknownShort: Could not read
+      unknown:
+        no-lockfile: >-
+          This release has no yarn.lock in it, so there is no record of which
+          shell version was compiled into the bundle.
+        not-in-lockfile: >-
+          A yarn.lock was read but it does not resolve @rancher/shell, so the
+          shipped version cannot be established from it.
+        unreadable: >-
+          The release's file listing could not be read. Its GitHub release name
+          and its git tag sometimes differ, in which case nothing resolves at
+          the ref the manifest points at.
+      source: 'Read from {lockfile}: {from} → {to}'
+      noneCleared: >-
+        No open finding in this repository is against a package shell pins, so
+        the bump clears nothing that is currently reported.
+      how:
+        removed: 'dropped by shell at {target}'
+        repinned: 'shell pins {version}'
+      removedTitle: '{count} dependencies shell no longer declares:'
+
+    search:
+      tab: Find a package
+      explain: >-
+        Every other tab starts from a published advisory. This one starts from
+        a name, which is how an incident actually arrives — usually hours
+        before anything is filed against it. It searches the complete resolved
+        lockfile of every official extension, not just what reaches a bundle,
+        because most supply-chain attacks run from a postinstall script and
+        never touch a browser.
+      label: Package
+      placeholder: 'lodash, or lodash@<4.17.21'
+      submit: Search
+      cols:
+        extension: Extension
+        resolved: Resolved version
+        inRange: In range?
+        ships: Ships?
+        release: Release
+      range: 'against {range}'
+      scope: 'Found in {found} of {searched} extensions'
+      notFound: >-
+        {name} is not in any of the {searched} extension lockfiles that were
+        searched.
+      notFoundShort: No extension resolves this package.
+      didYouMean: 'Close matches:'
+      unreadable: >-
+        No lockfile could be read for {extensions}, so this answer does not
+        cover them. Refresh the inventory, and if it keeps failing treat those
+        extensions as unknown rather than as clear.
+      ships: Ships
+      buildOnly: Build only
+      noBundles: >-
+        Bundle analysis has never been run, so whether this package reaches a
+        published bundle is unknown. Run it from the Bundle Analysis page.
+      cause: 'Pulled into the bundle by {cause}.'
+      readFrom: 'Read from {repo} at {ref}, {lockfile}'
+      head: HEAD
+      fromBranch: >-
+        No lockfile resolved at the release ref, so this was read from {ref} —
+        the current branch, not what was shipped.
+      verdict:
+        # Whether the resolved version falls inside the range that was typed.
+        # Same four states the reach tab uses, and the same meanings.
+        hit: In range
+        partial: One of several
+        unknown: Unconfirmed
+        miss: Out of range
+      stale: >-
+        The package inventory was built over a day ago, so a dependency bumped
+        since then is not reflected. Refresh before acting on an empty result.
+      needsBuild: >-
+        The package inventory has not been built yet. It reads one lockfile per
+        extension — a few seconds, and none of it against the GitHub rate
+        limit — and is then stored for the next visit.
+      build: Build package inventory
+      building: Reading lockfiles…
+      # No timestamp: the page header above already carries one for this tab.
+      coverage: 'Searching {count} extension lockfiles, {packages} distinct packages'
+
     detail:
       # Sentence forms, used where the field sits inline in a list
       range: 'Vulnerable: {value}'
@@ -694,6 +870,12 @@ extensionsCenter:
       noFix: No patch available
       ghsaLink: 'View {value} on GitHub'
       cveLink: 'View {value} in the National Vulnerability Database'
+      pr: 'Open PR #{number}'
+      prLink: '#{number} {title}'
+      prDraft: draft
+      remediation: Fix
+      remediationIn: 'Add to {file}'
+      copy: Copy the fix
 
     publicSource:
       title: 'Source: public data, not Dependabot'

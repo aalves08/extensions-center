@@ -47,11 +47,25 @@ export default defineComponent({
         {
           name: 'headBranch', labelKey: 'extensionsCenter.officialRepos.cols.headBranch', value: 'headBranch', sort: ['headBranch']
         },
+        // Both of these are the range `package.json` declares on the head
+        // branch, which is not the version the latest release ships — shell is
+        // compiled into an extension's bundle, so what shipped is whatever that
+        // release's lockfile resolved. The tooltip says so — there is no room
+        // in the header for it — and the Security page's shell upgrade tab
+        // carries the shipped figure.
         {
-          name: 'shellVersion', labelKey: 'extensionsCenter.officialRepos.cols.shellVersion', value: 'shellVersion', sort: ['shellVersion']
+          name:     'shellVersion',
+          labelKey: 'extensionsCenter.officialRepos.cols.shellVersion',
+          tooltip:  'extensionsCenter.officialRepos.declaredTooltip',
+          value:    'shellVersion',
+          sort:     ['shellVersion'],
         },
         {
-          name: 'componentsVersion', labelKey: 'extensionsCenter.officialRepos.cols.componentsVersion', value: 'componentsVersion', sort: ['componentsVersion']
+          name:     'componentsVersion',
+          labelKey: 'extensionsCenter.officialRepos.cols.componentsVersion',
+          tooltip:  'extensionsCenter.officialRepos.declaredTooltip',
+          value:    'componentsVersion',
+          sort:     ['componentsVersion'],
         },
         {
           name: 'publishedVersion', labelKey: 'extensionsCenter.officialRepos.cols.publishedVersion', value: 'publishedVersion', sort: ['publishedVersion']
@@ -164,6 +178,18 @@ export default defineComponent({
 
 <style lang="scss" scoped>
 .official-repos {
+  // The labels carry explicit <br>s so six columns fit in half a dashboard
+  // row (see the comment on `officialRepos.cols` in the l10n file). Sitting a
+  // two-line label next to a one-line one leaves both the short headers and
+  // the sort arrows floating, so everything hangs off the bottom instead.
+  :deep(thead th) {
+    vertical-align: bottom;
+
+    .table-header-container {
+      align-items: flex-end;
+    }
+  }
+
   .icon-external-link {
     font-size: 11px;
   }

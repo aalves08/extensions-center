@@ -212,15 +212,108 @@ export const SECURITY_CONCURRENCY = 8;
 export const SECURITY_BUCKET_DAYS = 7;
 
 /**
- * How long a loaded repo stays good for.
+ * Where the Security page's results are persisted.
  *
- * Held in memory only: the point is that leaving the page and coming back does
- * not throw away a minute of work, not that the data survives a reload.
- * Fifteen minutes is longer than a visit and far shorter than a working day,
- * so nobody reads yesterday's numbers believing they are current — and
- * `lastRefreshed` is on screen either way.
+ * Stored gzipped, unlike the two analysis documents: the estate comes to
+ * roughly 870KB of JSON, which is close enough to etcd's ~1MiB object limit to
+ * be a problem waiting to happen, and it compresses to around 40KB because it
+ * is mostly repeated advisory text and package names.
  */
-export const SECURITY_CACHE_TTL_MINUTES = 15;
+export const SECURITY_CONFIGMAP_NAME = 'extensions-center-security';
+
+/**
+ * Same contract as the other cache versions: bump when the shape changes.
+ *
+ * 2 adds triage, exposure and the matched Dependabot PR to every advisory. A v1
+ * document has none of them, and a stored finding with no triage would render
+ * as a blank column rather than as missing data, so v1 is discarded.
+ */
+export const SECURITY_CACHE_VERSION = 2;
+
+/**
+ * How many of a repo's open PRs are checked for a Dependabot version bump.
+ *
+ * Each costs a commits call on top of the one list call, so this is a ceiling
+ * on the scan rather than a page size. `rancher/dashboard` — by far the busiest
+ * repo here — sits around 20 open Dependabot PRs, so 60 absorbs a backlog
+ * without the scan outgrowing the alert pull it annotates.
+ */
+export const DEPENDABOT_PR_SCAN_LIMIT = 60;
+
+/** In-flight commit reads while scanning those PRs. */
+export const DEPENDABOT_PR_CONCURRENCY = 6;
+
+/** The package the shell-upgrade tab is entirely about. */
+export const SHELL_PACKAGE = '@rancher/shell';
+
+/**
+ * The lockfile the shipped `@rancher/shell` version is read out of.
+ *
+ * Every official extension repo builds with yarn, so there is one filename to
+ * look for — but a repo can hold several copies of it. `rancher-ai-ui` has
+ * `tests/yarn.lock` and `mock-agent/yarn.lock`, `virtual-clusters-ui` has one
+ * under `pkg/`, and none of those resolve shell. Which one is right is decided
+ * by which one actually contains shell rather than by position, so the
+ * selection validates itself instead of assuming the root.
+ */
+export const SHELL_LOCKFILE = 'yarn.lock';
+
+/** Extensions whose releases are read at once, each costing a tree plus a lockfile. */
+export const SHELL_UPGRADE_CONCURRENCY = 4;
+
+// ─── Package inventory ───────────────────────────────────────────────────────
+
+export const INVENTORY_CONFIGMAP_NAME = 'extensions-center-inventory';
+
+/** Same contract as the other cache versions: bump when the shape changes. */
+export const INVENTORY_CACHE_VERSION = 1;
+
+/**
+ * Extensions whose lockfiles are read at once. One tree plus one file each.
+ *
+ * Lower than it could be because each file is large — the five lockfiles
+ * measured ran 594KB to 730KB — and the raw host is not the API host, so there
+ * is no rate limit to spend but there is bandwidth.
+ */
+export const INVENTORY_CONCURRENCY = 3;
+
+/**
+ * Near-miss package names offered when an exact search finds nothing.
+ *
+ * Capped because the inventory holds roughly 1,500 names per extension and a
+ * two-letter query would otherwise suggest hundreds.
+ */
+export const INVENTORY_SUGGESTION_LIMIT = 12;
+
+/**
+ * The whole `@rancher/shell` packument, which is where the upgrade tab gets
+ * both its target versions and every version's dependency list.
+ *
+ * 700KB of JSON, but ~55KB on the wire gzipped and fetched once per session.
+ * The two cheaper-looking endpoints do not work from a browser: the `dist-tags`
+ * route sends no `access-control-allow-origin` at all, and the abbreviated
+ * packument needs an `Accept` header that makes the request non-simple and
+ * fails its preflight with a 404. One large readable response beats three small
+ * unreachable ones.
+ */
+export const NPM_PACKUMENT = (name: string) => `${ NPM_REGISTRY_API }/${ name.replace('/', '%2F') }`;
+
+/**
+ * Ages at which the Security page starts saying something about its own data.
+ *
+ * The page never re-reads on its own — a repo costs a paginated alert pull or
+ * an SBOM plus dozens of OSV calls, so that decision stays with the person
+ * looking at it. What it does instead is refuse to be quiet about age, in two
+ * steps: a note once the data is over a day old, and a warning past three days
+ * telling the reader to re-read before acting on it.
+ *
+ * Two thresholds rather than one because they are different messages. A day
+ * old is "this has probably moved"; three days is "do not make a decision on
+ * this", and a single banner cannot say both without overstating the first
+ * case or understating the second.
+ */
+export const SECURITY_STALE_HOURS = 24;
+export const SECURITY_OVERDUE_DAYS = 3;
 
 /** How many rows the dashboard summary tables show */
 export const DASHBOARD_ROW_LIMIT = 10;

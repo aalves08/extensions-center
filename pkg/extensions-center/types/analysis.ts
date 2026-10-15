@@ -256,5 +256,5 @@ export interface ProgressState {
 }
 
 export interface AnalysisProgress extends ProgressState {
-  phase: 'targets' | 'modules' | 'listing' | 'sources' | 'maps' | 'saving';
+  phase: 'targets' | 'modules' | 'listing' | 'lockfiles' | 'sources' | 'maps' | 'saving';
 }

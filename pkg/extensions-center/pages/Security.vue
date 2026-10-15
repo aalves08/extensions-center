@@ -3,17 +3,23 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { useStore } from 'vuex';
 import { Banner } from '@components/Banner';
+import { Checkbox } from '@components/Form/Checkbox';
 import AsyncButton from '@shell/components/AsyncButton.vue';
 import Tabbed from '@shell/components/Tabbed/index.vue';
 import Tab from '@shell/components/Tabbed/Tab.vue';
 
 import AnalysisProgressBar from '../components/AnalysisProgressBar.vue';
+import PackageSearch from '../components/PackageSearch.vue';
 import ReachTable from '../components/ReachTable.vue';
 import SecurityRepoPanel from '../components/SecurityRepoPanel.vue';
 import SectionHeader from '../components/SectionHeader.vue';
 import SeverityAmountBar from '../components/SeverityAmountBar.vue';
+import ShellUpgradeTable from '../components/ShellUpgradeTable.vue';
+import { SECURITY_OVERDUE_DAYS, SECURITY_STALE_HOURS } from '../config/constants';
 import { useBundleAnalysis } from '../composables/useBundleAnalysis';
+import { useInventory } from '../composables/useInventory';
 import { useRepoSecurity } from '../composables/useRepoSecurity';
+import { useShellUpgrade } from '../composables/useShellUpgrade';
 import { RancherStore } from '../types/rancher';
 import { RepoSecurity, SecurityTarget, SEVERITIES } from '../types/security';
 import { buildReach } from '../utils/vulnReach';
@@ -53,6 +59,15 @@ const ROLLUP = 'all-repos';
 /** Tab id of the cross-repo reach view. Same constraints as `ROLLUP`. */
 const REACH = 'by-package';
 
+/** Tab id of the shell-upgrade view. Same constraints as `ROLLUP`. */
+const SHELL = 'shell-upgrade';
+
+/** Tab id of the package search. Same constraints as `ROLLUP`. */
+const SEARCH = 'find-package';
+
+/** Tabs that are views over the estate rather than over one repository. */
+const CROSS_REPO = [ROLLUP, REACH, SHELL, SEARCH];
+
 const tabbed = ref<TabbedApi | null>(null);
 const activeTab = ref(ROLLUP);
 
@@ -91,6 +106,70 @@ const reach = computed(() => {
 
 const reachRepos = computed(() => Object.keys(security.loaded.value).length);
 
+// ─── Shell upgrade ───────────────────────────────────────────────────────────
+
+const shell = useShellUpgrade(store);
+
+/**
+ * Whether the target is shell's `pre-release` tag rather than `latest`.
+ *
+ * Off by default, and a real choice rather than a display option: 3.0.13 to
+ * 3.0.14-rc.4 moves another 26 dependencies, so an extension can sometimes
+ * only clear a finding by taking the release candidate — which is a decision
+ * about what to ship, not about what to look at.
+ */
+const preRelease = ref(false);
+
+/**
+ * Read the shipped shell versions, against whichever channel is selected.
+ *
+ * Cheap after the first call: the composable holds the registry document, the
+ * resolved targets and every lockfile it has read, so toggling the channel
+ * re-runs the diff rather than the fetches.
+ */
+function onPreRelease(value: boolean) {
+  preRelease.value = value;
+  loadShell();
+}
+
+async function loadShell(force = false) {
+  if (force) {
+    shell.invalidate();
+  }
+
+  await shell.load(preRelease.value ? 'pre-release' : 'latest', Object.values(security.loaded.value) as RepoSecurity[]);
+}
+
+// ─── Package search ──────────────────────────────────────────────────────────
+
+const inventory = useInventory(store);
+
+/**
+ * Distinct package names across the whole inventory.
+ *
+ * Shown in the coverage line so the number the search is drawing on is stated
+ * rather than implied — "not found" means something quite different against
+ * 20,000 names than against 200.
+ */
+const inventoryPackages = computed(() => {
+  const names = new Set<string>();
+
+  for (const ext of inventory.doc.value?.extensions || []) {
+    for (const pkg of Object.keys(ext.packages)) {
+      names.add(pkg);
+    }
+  }
+
+  return names.size;
+});
+
+const searchRepos = computed(() => Object.values(security.loaded.value) as RepoSecurity[]);
+
+async function buildInventory(done?: Done) {
+  await inventory.rebuild();
+  done?.(true);
+}
+
 /**
  * "Last refreshed" for whatever is on screen.
  *
@@ -99,6 +178,18 @@ const reachRepos = computed(() => Object.keys(security.loaded.value).length);
  * opened.
  */
 const lastRefreshed = computed(() => {
+  // The shell tab is read from npm and from the release tags rather than from
+  // the persisted security document, so it ages on its own clock.
+  if (activeTab.value === SHELL) {
+    return shell.data.value ? new Date(shell.data.value.fetchedAt) : null;
+  }
+
+  // The inventory is its own document in its own ConfigMap, read on its own
+  // schedule, so it reports its own age too.
+  if (activeTab.value === SEARCH) {
+    return inventory.doc.value ? new Date(inventory.doc.value.fetchedAt) : null;
+  }
+
   // The reach tab is a view over everything already loaded, so it is exactly
   // as current as the oldest of them — the same answer the estate gives.
   if (activeTab.value === ROLLUP || activeTab.value === REACH) {
@@ -109,7 +200,33 @@ const lastRefreshed = computed(() => {
 });
 
 const busy = computed(() => {
-  return !!security.rollupProgress.value || !!security.loading.value[activeTab.value];
+  return !!security.rollupProgress.value || !!security.loading.value[activeTab.value] ||
+    (activeTab.value === SHELL && shell.loading.value) ||
+    (activeTab.value === SEARCH && (inventory.loading.value || inventory.rebuilding.value));
+});
+
+/**
+ * How much the page should say about the age of what is on screen.
+ *
+ * Nothing here triggers a re-read. The data is persisted between visits, so it
+ * can be arbitrarily old, and the page's obligation is to say so rather than
+ * to quietly spend minutes of someone's time fixing it. Two steps because they
+ * are two different messages — see `SECURITY_STALE_HOURS`.
+ */
+const freshness = computed<'fresh' | 'stale' | 'overdue'>(() => {
+  const at = lastRefreshed.value;
+
+  if (!at) {
+    return 'fresh';
+  }
+
+  const hours = (Date.now() - at.getTime()) / 3_600_000;
+
+  if (hours >= SECURITY_OVERDUE_DAYS * 24) {
+    return 'overdue';
+  }
+
+  return hours >= SECURITY_STALE_HOURS ? 'stale' : 'fresh';
 });
 
 /**
@@ -121,7 +238,29 @@ const busy = computed(() => {
 async function onTabChange(e: { selectedName: string }) {
   activeTab.value = e.selectedName;
 
-  if (e.selectedName === ROLLUP || e.selectedName === REACH) {
+  // Loaded on first open rather than behind a button, unlike the estate: this
+  // is one registry document and a lockfile per extension, seconds rather
+  // than the minute the estate costs. Re-opening it reuses what it holds.
+  if (e.selectedName === SHELL) {
+    if (!shell.data.value) {
+      await loadShell();
+    }
+
+    return;
+  }
+
+  // One ConfigMap read, and only the first time. Building it is a separate,
+  // explicit press: reading fourteen lockfiles is not something opening a tab
+  // should start on someone's behalf.
+  if (e.selectedName === SEARCH) {
+    if (!inventory.doc.value && !inventory.needsBuild.value) {
+      await inventory.load();
+    }
+
+    return;
+  }
+
+  if (CROSS_REPO.includes(e.selectedName)) {
     return;
   }
 
@@ -162,6 +301,20 @@ async function loadRollup(done?: Done) {
 }
 
 async function refresh(done?: Done) {
+  if (activeTab.value === SHELL) {
+    await loadShell(true);
+    done?.(true);
+
+    return;
+  }
+
+  if (activeTab.value === SEARCH) {
+    await inventory.rebuild();
+    done?.(true);
+
+    return;
+  }
+
   await security.loadTargets(true);
 
   const target = security.targets.value.find((t) => t.id === activeTab.value);
@@ -192,6 +345,12 @@ onMounted(async() => {
 
   await security.loadTargets();
 
+  // After the targets, never before: the stored results are matched against
+  // the tab strip, so it has to exist first. One more ConfigMap read, and on a
+  // cluster where the estate has been run it is the difference between a
+  // filled page and a minutes-long prompt.
+  await security.restore();
+
   if (!linkedTab || linkedTab === activeTab.value || !security.targets.value.some((t) => t.id === linkedTab)) {
     return;
   }
@@ -220,6 +379,28 @@ onMounted(async() => {
       v-if="security.targetsError.value"
       color="warning"
       :label="t('extensionsCenter.security.manifestFailed', { message: security.targetsError.value })"
+    />
+
+    <!--
+      Age, stated rather than acted on. The exact timestamp is already in the
+      header directly above, so these name the threshold crossed instead of
+      repeating it as a relative time.
+    -->
+    <Banner
+      v-if="freshness === 'overdue'"
+      color="warning"
+      :label="t('extensionsCenter.security.cache.overdue', { days: SECURITY_OVERDUE_DAYS })"
+    />
+    <Banner
+      v-else-if="freshness === 'stale'"
+      color="info"
+      :label="t('extensionsCenter.security.cache.stale')"
+    />
+
+    <Banner
+      v-if="security.cacheError.value"
+      color="warning"
+      :label="t('extensionsCenter.security.cache.writeFailed', { message: security.cacheError.value })"
     />
 
     <Tabbed
@@ -392,6 +573,136 @@ onMounted(async() => {
       </Tab>
 
       <Tab
+        name="shell-upgrade"
+        :label="t('extensionsCenter.security.shellUpgrade.tab')"
+        :weight="98"
+      >
+        <p class="text-muted shell-intro">
+          {{ t('extensionsCenter.security.shellUpgrade.explain') }}
+        </p>
+
+        <Banner
+          v-if="shell.data.value && shell.data.value.error"
+          color="error"
+          :label="shell.data.value.error"
+        />
+
+        <template v-else>
+          <div class="shell-controls">
+            <span
+              v-if="shell.data.value"
+              class="shell-target"
+            >
+              {{ t('extensionsCenter.security.shellUpgrade.target', { version: shell.data.value.target }) }}
+            </span>
+
+            <!--
+              A checkbox rather than a second tab: it changes which version the
+              same question is asked about, and the answer is directly
+              comparable either way.
+            -->
+            <Checkbox
+              :value="preRelease"
+              :label="t('extensionsCenter.security.shellUpgrade.includePrereleases')"
+              :disabled="shell.loading.value"
+              @update:value="onPreRelease"
+            />
+          </div>
+
+          <!--
+            Said once, above the table, because it qualifies every number in
+            the cleared column rather than any single row.
+          -->
+          <Banner
+            color="info"
+            :label="t('extensionsCenter.security.shellUpgrade.floor')"
+          />
+
+          <Banner
+            v-if="!reachRepos"
+            color="info"
+            :label="t('extensionsCenter.security.shellUpgrade.noRepos')"
+          />
+
+          <ShellUpgradeTable
+            :rows="shell.data.value ? shell.data.value.rows : []"
+            :target="shell.data.value ? shell.data.value.target : ''"
+            :loading="shell.loading.value"
+          />
+        </template>
+      </Tab>
+
+      <Tab
+        name="find-package"
+        :label="t('extensionsCenter.security.search.tab')"
+        :weight="97"
+      >
+        <p class="text-muted search-intro">
+          {{ t('extensionsCenter.security.search.explain') }}
+        </p>
+
+        <AnalysisProgressBar :progress="inventory.progress.value" />
+
+        <Banner
+          v-if="inventory.error.value"
+          color="warning"
+          :label="inventory.error.value"
+        />
+
+        <!--
+          Building is a press rather than a side effect of opening the tab.
+          Fourteen lockfiles is seconds, not minutes, but it is still work
+          nobody asked for, and the empty state has to be able to say why the
+          box is disabled.
+        -->
+        <div
+          v-if="!inventory.doc.value"
+          class="inventory-build"
+        >
+          <p
+            v-if="!inventory.rebuilding.value"
+            class="text-muted"
+          >
+            {{ t('extensionsCenter.security.search.needsBuild') }}
+          </p>
+          <AsyncButton
+            mode="refresh"
+            :action-label="t('extensionsCenter.security.search.build')"
+            :waiting-label="t('extensionsCenter.security.search.building')"
+            :disabled="inventory.rebuilding.value"
+            @click="buildInventory"
+          />
+        </div>
+
+        <template v-else>
+          <p class="text-muted coverage">
+            {{ t('extensionsCenter.security.search.coverage', {
+              count: inventory.doc.value.extensions.length,
+              packages: inventoryPackages,
+            }) }}
+          </p>
+
+          <!--
+            Its own staleness note, separate from the page-level one: the
+            inventory ages independently of the advisories, and an empty
+            result from an old inventory is the specific thing worth warning
+            about here.
+          -->
+          <Banner
+            v-if="inventory.stale.value"
+            color="info"
+            :label="t('extensionsCenter.security.search.stale')"
+          />
+        </template>
+
+        <PackageSearch
+          :inventory="inventory.doc.value"
+          :bundles="bundles.doc.value"
+          :repos="searchRepos"
+        />
+      </Tab>
+
+      <Tab
         v-for="(target, i) in security.targets.value"
         :key="target.id"
         :name="target.id"
@@ -422,9 +733,37 @@ onMounted(async() => {
     }
   }
 
-  .reach-intro {
+  .reach-intro,
+  .shell-intro,
+  .search-intro {
     margin: 16px 0;
     max-width: 90ch;
+  }
+
+  .inventory-build {
+    margin-bottom: 24px;
+
+    p {
+      margin: 0 0 12px;
+      max-width: 70ch;
+    }
+  }
+
+  .coverage {
+    font-size: 12px;
+    margin: 0 0 12px;
+  }
+
+  .shell-controls {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    margin-bottom: 12px;
+  }
+
+  .shell-target {
+    font-size: 12px;
   }
 
   .reach-summary {

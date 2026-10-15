@@ -21,9 +21,10 @@ export interface OsvVuln {
  * repos the advisory fetches drop from 586 to 254 — 57% saved — and revisiting
  * a tab costs nothing at all.
  *
- * Deliberately *not* persisted. Vulnerability data going stale is worse than
- * vulnerability data being slow, so a browser refresh is meant to re-read
- * everything.
+ * Deliberately *not* persisted, unlike the results built out of it. These are
+ * raw advisory records — a fetch input, and the bulkiest one here — whereas
+ * what the Security page stores is the handful of open groups they collapse
+ * into. Keeping these too would multiply the stored document for no gain.
  */
 const cache = new Map<string, OsvVuln>();
 

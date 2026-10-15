@@ -301,7 +301,9 @@ onMounted(() => analysis.load());
         >
           <ImportPathsTable
             :rows="doc.shellPaths"
+            :detail="doc.detail"
             path-label-key="extensionsCenter.importAnalysis.cols.shellPath"
+            @select="showDetail"
           />
         </Tab>
 
@@ -312,7 +314,9 @@ onMounted(() => analysis.load());
         >
           <ImportPathsTable
             :rows="doc.componentsPaths"
+            :detail="doc.detail"
             path-label-key="extensionsCenter.importAnalysis.cols.componentsPath"
+            @select="showDetail"
           />
         </Tab>
 
@@ -323,8 +327,10 @@ onMounted(() => analysis.load());
         >
           <ImportPathsTable
             :rows="doc.externalPkgs"
+            :detail="doc.detail"
             path-label-key="extensionsCenter.importAnalysis.cols.package"
             :show-bytes="false"
+            @select="showDetail"
           />
         </Tab>
 
@@ -338,8 +344,10 @@ onMounted(() => analysis.load());
           </p>
           <ImportPathsTable
             :rows="unresolved"
+            :detail="doc.detail"
             path-label-key="extensionsCenter.importAnalysis.cols.shellPath"
             :show-bytes="false"
+            @select="showDetail"
           />
         </Tab>
 

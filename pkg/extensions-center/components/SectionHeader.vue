@@ -8,9 +8,10 @@ import { i18nMixin } from '../utils/i18n';
  * Header shared by every data section: title, an optional link through to the
  * full list view, a refresh action and when the data was last fetched.
  *
- * Nothing in this extension is persisted, so "last refreshed" is the only
- * signal a user has for how current a table is — it is deliberately part of the
- * header rather than tucked away.
+ * "Last refreshed" is the only signal a user has for how current a table is —
+ * and the expensive pages persist their results between visits, so it can be
+ * reporting a fetch from days ago. It is deliberately part of the header
+ * rather than tucked away.
  */
 export default defineComponent({
   name: 'SectionHeader',
