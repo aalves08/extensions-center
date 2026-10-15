@@ -2,6 +2,7 @@ import { GITHUB_API, OSV_API, OSV_BATCH_SIZE, SECURITY_CONCURRENCY } from '../co
 import { Advisory, RepoSecurity } from '../types/security';
 import { mapWithConcurrency } from '../utils/async';
 import { countGroups, groupByPackage, normaliseSeverity } from '../utils/severity';
+import { withTriage } from '../utils/triage';
 import { OsvVuln, useOsvCache } from './useOsvCache';
 
 /** One resolved dependency out of the SBOM. */
@@ -208,7 +209,11 @@ async function describe(
 
   for (const { id, vuln } of records) {
     for (const pkg of byId.get(id) || []) {
-      out.push({
+      // No PR list for a public-data repo: these targets are read through an
+      // SBOM precisely because their Dependabot alerts are not visible, and a
+      // repo whose alerts cannot be read is one whose fixes cannot be matched
+      // either. Every row here is `no-fix` or `fix-ready`, which is honest.
+      out.push(withTriage({
         id:              `${ id }@${ pkg.ecosystem }/${ pkg.name }`,
         packageName:     pkg.name,
         ecosystem:       pkg.ecosystem,
@@ -230,7 +235,7 @@ async function describe(
         createdAt:       null,
         closedAt:        null,
         url:             `https://osv.dev/vulnerability/${ id }`,
-      });
+      }, []));
     }
   }
 

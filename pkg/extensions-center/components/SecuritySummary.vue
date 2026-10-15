@@ -1,33 +1,54 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { Severity, SEVERITIES } from '../types/security';
+import { Severity, SEVERITIES, TriageStatus } from '../types/security';
 import { useTranslation } from '../utils/i18n';
 import { ageInDays } from '../utils/severity';
+import { TRIAGE_ORDER } from '../utils/triage';
 import SeverityAmountBar from './SeverityAmountBar.vue';
 
 /**
  * The summary above a repo's table.
  *
  * One bordered strip with two blocks, not a row of cards: the severity
- * breakdown and the two remediation numbers are the same summary read two
- * ways, and boxing them separately makes them look like unrelated widgets.
+ * breakdown and the remediation numbers are the same summary read two ways,
+ * and boxing them separately makes them look like unrelated widgets.
  *
- * "No patch available" is work that cannot be done by bumping a version, so it
- * needs a different decision; "oldest open" is the one number that says
- * whether anything is actually being acted on.
+ * The right-hand block leads on triage rather than on severity, because
+ * severity is already the whole of the left-hand block and repeating it says
+ * nothing new. What it adds is who has to move: on `rancher/dashboard` the
+ * severity bar reads "18 open, 2 critical" while the triage split reads "12
+ * cannot be fixed, 5 are waiting on a reviewer, 1 needs a PR" — the same
+ * findings, and the only version of them anyone can act on.
+ *
+ * It replaces the old "no patch available" number rather than sitting beside
+ * it: `no-fix` is that number, exactly, and printing both would be two labels
+ * for one count.
  */
 const props = withDefaults(defineProps<{
   counts: Record<Severity, number>;
   /** Open advisories across every severity, shown muted in the block header */
   total?: number;
-  unpatched?: number;
+  triage?: Record<TriageStatus, number> | null;
   oldest?: string | null;
 }>(), {
-  total: 0, unpatched: 0, oldest: null
+  total: 0, triage: null, oldest: null
 });
 
 const t = useTranslation();
+
+/**
+ * The triage split, most work remaining first.
+ *
+ * Every status is shown even at zero. "0 need a PR" is a result worth reading,
+ * and a block whose columns move about depending on the repo is harder to
+ * compare across tabs than one with a fixed shape.
+ */
+const triageStats = computed(() => TRIAGE_ORDER.map((status) => ({
+  status,
+  count: props.triage?.[status] || 0,
+  label: t(`extensionsCenter.security.triage.${ status }.short`),
+})));
 
 /**
  * Labels under the bar, in the bar's own order.
@@ -88,20 +109,26 @@ const oldestLabel = computed(() => {
       </h3>
 
       <!--
-        Only `unpatched` is ever coloured, and only when it is non-zero. An age
-        is not a failure, and colouring both would leave neither reading as the
-        exception.
+        Only `fix-ready` is ever coloured, and only when it is non-zero. It is
+        the one number that is nobody's blocker: the fix exists, and no PR has
+        been raised. `no-fix` is larger and looks worse but cannot be acted on,
+        an age is not a failure, and colouring all three would leave none of
+        them reading as the exception.
       -->
       <div class="stats">
-        <div class="stat">
+        <div
+          v-for="stat in triageStats"
+          :key="stat.status"
+          class="stat"
+        >
           <div
             class="stat-value"
-            :class="{ 'text-error': unpatched > 0 }"
+            :class="{ 'text-warning': stat.status === 'fix-ready' && stat.count > 0 }"
           >
-            {{ unpatched }}
+            {{ stat.count }}
           </div>
           <div class="stat-label">
-            {{ t('extensionsCenter.security.tiles.unpatched') }}
+            {{ stat.label }}
           </div>
         </div>
 
@@ -175,33 +202,38 @@ const oldestLabel = computed(() => {
   text-align: center;
 }
 
+// Four figures now rather than two, so the gap and the type come down to suit.
+// Still one row: the triage split only reads as a split if its parts sit side
+// by side, and wrapping "oldest" onto a second line would imply it belongs to
+// a different group than it does.
 .stats {
   align-items: center;
   display: flex;
   flex: 1;
-  gap: 32px;
+  gap: 16px;
   justify-content: space-between;
 }
 
 .stat {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   text-align: center;
 }
 
 .stat-value {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
-  line-height: 36px;
+  line-height: 32px;
 }
 
 .stat-label {
   color: var(--disabled-text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 400;
-  line-height: 20px;
+  line-height: 18px;
 }
 
 @media (max-width: 1200px) {

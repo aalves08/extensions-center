@@ -1,15 +1,18 @@
 import { Ref, ref } from 'vue';
 
 import {
-  OFFICIAL_MANIFEST_PATH, OFFICIAL_MANIFEST_REPO, SECURITY_CACHE_TTL_MINUTES,
-  SECURITY_FIXED_REPOS, SECURITY_NPM_TARGETS
+  OFFICIAL_MANIFEST_PATH, OFFICIAL_MANIFEST_REPO, SECURITY_CACHE_VERSION,
+  SECURITY_CONFIGMAP_NAME, SECURITY_FIXED_REPOS, SECURITY_NPM_TARGETS
 } from '../config/constants';
 import { Manifest } from '../types/github';
-import { RancherStore } from '../types/rancher';
+import { errorMessage, RancherStore } from '../types/rancher';
 import {
-  RepoSecurity, SecurityProgress, SecurityRollup, SecurityTarget, Severity
+  PrFix, RepoSecurity, SecurityDoc, SecurityProgress, SecurityRollup, SecurityTarget, Severity
 } from '../types/security';
 import { addCounts, emptyCounts } from '../utils/severity';
+import { applyPrs, emptyTriageCounts } from '../utils/triage';
+import { useAnalysisCache } from './useAnalysisCache';
+import { useDependabotPrs } from './useDependabotPrs';
 import { describeGitHubError, useGitHubApi } from './useGitHubApi';
 import { usePublicVulns } from './usePublicVulns';
 import { clearRepoLayoutCache, repoLayout } from './useRepoExtensions';
@@ -24,25 +27,37 @@ import { AlertsUnavailableError, useSecurityAlerts } from './useSecurityAlerts';
  */
 
 /**
- * Page state, module-level so it outlives the page being unmounted.
+ * Page state, module-level so it outlives the page being unmounted, and
+ * written through to a ConfigMap so it outlives the tab.
  *
  * The Security page is one route among nine and a full pull is minutes of
- * work, so charging someone for it again because they clicked Settings and
- * came back is not a defensible trade. What this deliberately does *not* do is
- * outlive the tab: nothing goes to a ConfigMap or to storage, so a browser
- * refresh still re-reads everything — stale security data is still worse than
- * slow security data, and that rule is only being relaxed for in-session
- * navigation.
+ * work, so charging someone for it again — because they clicked Settings and
+ * came back, because they reloaded, or because they are the second person on
+ * the team to open it today — is not a defensible trade.
  *
- * Freshness is bounded rather than assumed. Anything older than
- * `SECURITY_CACHE_TTL_MINUTES` is re-read on the next look, and the age of
- * what is on screen is reported by `lastRefreshed` regardless.
+ * Persisting it means accepting that what is on screen may be old, so nothing
+ * here pretends otherwise. Data is re-read only when someone asks, never on a
+ * timer, and the page states the age of what it is showing and escalates that
+ * statement past `SECURITY_OVERDUE_DAYS`. Loud and old beats silent and
+ * old; what the previous design avoided was the silence, not the age.
  */
 const targets: Ref<SecurityTarget[]> = ref([]);
 const loaded: Ref<Record<string, RepoSecurity>> = ref({});
 const loading: Ref<Record<string, boolean>> = ref({});
 const targetsError: Ref<string | null> = ref(null);
 const rollupProgress: Ref<SecurityProgress | null> = ref(null);
+
+/** Whether the stored document has been read this tab. One read, not one per visit. */
+const restored = ref(false);
+
+/**
+ * Set when the document could not be saved.
+ *
+ * Surfaced rather than thrown: a failed write costs the *next* visit its head
+ * start and nothing else, so it must not take down a page whose data is
+ * already loaded and correct.
+ */
+const cacheError: Ref<string | null> = ref(null);
 
 /**
  * Whether the estate view has been filled at least once.
@@ -61,20 +76,18 @@ const rollupLoaded = ref(false);
  */
 const declaredCache = new Map<string, Set<string>>();
 
-/** Whether a loaded repo is old enough to be worth re-reading. */
-function isStale(result: RepoSecurity): boolean {
-  const at = Date.parse(result.fetchedAt);
-
-  // An unparseable timestamp counts as ancient rather than as current: the
-  // failure mode of re-fetching is a slow tab, and of not re-fetching is a
-  // wrong one.
-  return !Number.isFinite(at) || Date.now() - at > SECURITY_CACHE_TTL_MINUTES * 60_000;
-}
-
 export function useRepoSecurity(store: RancherStore) {
   const api = useGitHubApi(store);
   const alerts = useSecurityAlerts(store);
   const publicVulns = usePublicVulns();
+  const prs = useDependabotPrs(store);
+
+  const cache = useAnalysisCache<SecurityDoc>(store, {
+    name:     SECURITY_CONFIGMAP_NAME,
+    version:  SECURITY_CACHE_VERSION,
+    // ~870KB of JSON across the estate, ~40KB gzipped. See the constant.
+    compress: true,
+  });
 
   const declaredPackages = async(repo: string, path: string): Promise<Set<string>> => {
     const key = `${ repo }:${ path }`;
@@ -189,6 +202,112 @@ export function useRepoSecurity(store: RancherStore) {
   };
 
   /**
+   * Replay the stored document into page state.
+   *
+   * Call after `loadTargets`, never before: results are matched against the
+   * current tab strip, so an extension dropped from the manifest since the
+   * document was written is discarded rather than given a tab back.
+   *
+   * Failing is not an error anyone needs to see. The worst case is the page
+   * behaving exactly as it did before it had a cache.
+   */
+  const restore = async(): Promise<void> => {
+    if (restored.value) {
+      return;
+    }
+
+    restored.value = true;
+
+    try {
+      const doc = await cache.read();
+
+      if (!doc) {
+        return;
+      }
+
+      const ids = targets.value.map((t) => t.id);
+      const kept: Record<string, RepoSecurity> = {};
+
+      for (const id of ids) {
+        const stored = doc.repos[id];
+
+        // Anything already loaded this session is newer by definition.
+        if (stored && !loaded.value[id]) {
+          kept[id] = stored;
+        }
+      }
+
+      loaded.value = { ...kept, ...loaded.value };
+
+      // Only when the document covers *every* target. `rollup()` renders
+      // whatever happens to be loaded, so flipping this on a partial restore
+      // would present a subset of the estate as the whole of it and understate
+      // every total — the one failure this page cannot afford.
+      rollupLoaded.value = ids.length > 0 && ids.every((id) => !!loaded.value[id]);
+    } catch {
+      // Unreadable or corrupt: the page loads from scratch, which is the
+      // behaviour it had before this existed.
+    }
+  };
+
+  /**
+   * Write the loaded results back.
+   *
+   * The whole document each time, including on a single tab's refresh. One
+   * ConfigMap write of ~55KB is not worth splitting into eighteen objects to
+   * avoid, and a single object keeps the restore to one read.
+   *
+   * Failed repos are dropped rather than stored. A cached failure is never
+   * honoured anywhere else in this file, so persisting one would only make the
+   * document bigger and the next visit's restore wronger.
+   */
+  const persist = async(): Promise<void> => {
+    if (!cache.canWrite()) {
+      return;
+    }
+
+    const repos: Record<string, RepoSecurity> = {};
+
+    for (const [id, result] of Object.entries(loaded.value)) {
+      if (!result.error) {
+        repos[id] = result;
+      }
+    }
+
+    if (!Object.keys(repos).length) {
+      return;
+    }
+
+    try {
+      await cache.write({
+        version:   SECURITY_CACHE_VERSION,
+        fetchedAt: new Date().toISOString(),
+        repos,
+      });
+
+      cacheError.value = null;
+    } catch (e) {
+      cacheError.value = errorMessage(e);
+    }
+  };
+
+  /**
+   * A repo's open Dependabot PRs, with a failure reported rather than raised.
+   *
+   * Listing pull requests is the one part of a repo's fetch that is allowed to
+   * fail without failing the fetch. Without it every fixable finding reads
+   * `fix-ready`, which overstates the work left — the safe direction — whereas
+   * throwing would cost the tab its findings over an annotation.
+   */
+  const prFixes = async(repo: string): Promise<{ fixes: PrFix[]; error?: string }> => {
+    try {
+      return { fixes: await prs.load(repo) };
+    } catch (e) {
+      return { fixes: [], error: describeGitHubError(e) };
+    }
+  };
+
+  /**
    * One repo, Dependabot first and public data second.
    *
    * The fallback is not a fault path. Our token has no standing on
@@ -199,23 +318,32 @@ export function useRepoSecurity(store: RancherStore) {
   const fetchTarget = async(target: SecurityTarget, force = false): Promise<RepoSecurity> => {
     const existing = loaded.value[target.id];
 
-    // A cached *failure* is deliberately not honoured. The usual cause is a
-    // transient rate limit, and a tab that stays broken until a browser
-    // refresh is a worse outcome than one extra request.
-    if (existing && !force && !existing.error && !isStale(existing)) {
+    // Served however old it is, unless someone asked for a re-read. Age is
+    // reported on screen and escalated past `SECURITY_OVERDUE_DAYS` rather
+    // than acted on here: re-reading costs a paginated alert pull or an SBOM
+    // plus dozens of OSV calls, and spending that on a timer, silently, is
+    // what a persisted cache exists to avoid.
+    //
+    // A cached *failure* is the exception. The usual cause is a transient rate
+    // limit, and a tab that stays broken until a browser refresh is a worse
+    // outcome than one extra request.
+    if (existing && !force && !existing.error) {
       return existing;
-    }
-
-    // Past the TTL the underlying alert pull has to go as well, or the repo is
-    // re-derived from the same cached response and nothing actually refreshes.
-    if (existing) {
-      alerts.invalidate(target.repo);
     }
 
     loading.value = { ...loading.value, [target.id]: true };
 
     try {
       let result: RepoSecurity;
+
+      // Started before the alerts rather than after them: it is one list call
+      // plus one per Dependabot PR, and there is no reason for the reader to
+      // wait for it in series behind a paginated alert pull.
+      //
+      // Run for public-data repos too. Their *alerts* are private to the owner,
+      // but their pull requests are not — so a repo this page can only read
+      // through an SBOM can still show that a fix is already open.
+      const openPrs = prFixes(target.repo);
 
       try {
         const shared = target.scope?.shared;
@@ -233,25 +361,29 @@ export function useRepoSecurity(store: RancherStore) {
         result = await publicVulns.load(target.id, target.repo, target.label);
       }
 
-      result = { ...result, noteKey: target.scope?.noteKey };
+      const { fixes, error: prError } = await openPrs;
+
+      result = {
+        ...applyPrs(result, fixes), noteKey: target.scope?.noteKey, prError
+      };
       loaded.value = { ...loaded.value, [target.id]: result };
 
       return result;
     } catch (e) {
       const failed: RepoSecurity = {
-        id:             target.id,
-        repo:           target.repo,
-        label:          target.label,
-        source:         'public',
-        groups:         [],
-        counts:         emptyCounts(),
-        openTotal:      0,
-        unpatchedCount: 0,
-        oldestOpen:     null,
-        history:        null,
-        unresolved:     0,
-        fetchedAt:      new Date().toISOString(),
-        error:          describeGitHubError(e),
+        id:           target.id,
+        repo:         target.repo,
+        label:        target.label,
+        source:       'public',
+        groups:       [],
+        counts:       emptyCounts(),
+        openTotal:    0,
+        triageCounts: emptyTriageCounts(),
+        oldestOpen:   null,
+        history:      null,
+        unresolved:   0,
+        fetchedAt:    new Date().toISOString(),
+        error:        describeGitHubError(e),
       };
 
       loaded.value = { ...loaded.value, [target.id]: failed };
@@ -265,9 +397,21 @@ export function useRepoSecurity(store: RancherStore) {
   const loadRepo = async(target: SecurityTarget, force = false): Promise<RepoSecurity> => {
     if (force) {
       alerts.invalidate(target.repo);
+      // Not per repo: `useDependabotPrs` holds one entry per repo and a
+      // refresh of one tab is a cheap excuse to re-read all of them.
+      prs.invalidate();
     }
 
-    return fetchTarget(target, force);
+    const before = loaded.value[target.id];
+    const result = await fetchTarget(target, force);
+
+    // Only when something actually changed. Opening an already-loaded tab is
+    // the common case and must not cost a write.
+    if (result !== before && !result.error) {
+      await persist();
+    }
+
+    return result;
   };
 
   /**
@@ -286,6 +430,7 @@ export function useRepoSecurity(store: RancherStore) {
     // alert list twice in a single pass.
     if (force) {
       alerts.invalidate();
+      prs.invalidate();
     }
 
     rollupProgress.value = { done: 0, total: list.length };
@@ -298,6 +443,10 @@ export function useRepoSecurity(store: RancherStore) {
     }
 
     rollupProgress.value = null;
+
+    // Once, at the end, rather than per repo: eighteen writes of a document
+    // that grows with each one is eighteen times the cost for the same result.
+    await persist();
   };
 
   /**
@@ -361,11 +510,13 @@ export function useRepoSecurity(store: RancherStore) {
   return {
     targets,
     targetsError,
+    cacheError,
     loaded,
     loading,
     rollupProgress,
     rollupLoaded,
     loadTargets,
+    restore,
     loadRepo,
     loadAll,
     lastRefreshed,

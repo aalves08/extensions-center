@@ -1,6 +1,7 @@
 import {
-  Advisory, DependencyScope, PackageGroup, Severity, SEVERITIES
+  Advisory, DependencyScope, PackageGroup, Severity, SEVERITIES, TriageStatus
 } from '../types/security';
+import { emptyTriageCounts, worstTriage } from './triage';
 
 /** Most severe first, which is the order everything on the page is ranked in. */
 const RANK: Record<Severity, number> = {
@@ -98,9 +99,9 @@ export function groupByPackage(advisories: Advisory[]): PackageGroup[] {
         counts:         emptyCounts(),
         manifests:      [],
         patchedVersion: null,
-        unpatched:      true,
         scope:          null,
         oldest:         null,
+        triage:         'no-fix',
       };
       groups.set(id, group);
     }
@@ -131,7 +132,12 @@ export function groupByPackage(advisories: Advisory[]): PackageGroup[] {
     const worst = group.advisories.find((a) => a.severity === group.worstSeverity);
 
     group.patchedVersion = worst?.patchedVersion || null;
-    group.unpatched = group.advisories.every((a) => !a.patchedVersion);
+
+    // Whichever advisory leaves the most to do, rather than the worst one's
+    // status: a package whose critical is already in a PR and whose medium is
+    // not is still work, and taking the critical's `in-review` would say it
+    // was handled.
+    group.triage = worstTriage(group.advisories.map((a) => a.triage));
   }
 
   return [...groups.values()].sort((a, b) => {
@@ -153,23 +159,26 @@ function scopeWith(current: PackageGroup['scope'], next: DependencyScope): Packa
 export function countGroups(groups: PackageGroup[]): {
   counts: Record<Severity, number>;
   openTotal: number;
-  unpatchedCount: number;
+  triageCounts: Record<TriageStatus, number>;
   oldestOpen: string | null;
 } {
   const counts = emptyCounts();
+  const triageCounts = emptyTriageCounts();
   let openTotal = 0;
-  let unpatchedCount = 0;
   let oldestOpen: string | null = null;
 
   for (const group of groups) {
     addCounts(counts, group.counts);
     openTotal += group.advisories.length;
-    unpatchedCount += group.advisories.filter((a) => !a.patchedVersion).length;
     oldestOpen = earlier(oldestOpen, group.oldest);
+
+    for (const advisory of group.advisories) {
+      triageCounts[advisory.triage]++;
+    }
   }
 
   return {
-    counts, openTotal, unpatchedCount, oldestOpen
+    counts, openTotal, triageCounts, oldestOpen
   };
 }
 

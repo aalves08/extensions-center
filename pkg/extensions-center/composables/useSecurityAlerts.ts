@@ -3,6 +3,7 @@ import { Advisory, RepoSecurity, SecurityTarget, TargetScope } from '../types/se
 import { RancherStore } from '../types/rancher';
 import { countGroups, groupByPackage, normaliseSeverity } from '../utils/severity';
 import { buildHistory } from '../utils/securityHistory';
+import { withTriage } from '../utils/triage';
 import { useGitHubApi } from './useGitHubApi';
 
 /** The slice of a Dependabot alert this page reads. */
@@ -163,7 +164,11 @@ function toAdvisory(repo: string) {
   return (alert: DependabotAlert): Advisory => {
     const state = alert.state as Advisory['state'];
 
-    return {
+    // No PRs known at this point: the repo's open pull requests are fetched
+    // alongside the alerts, not before them, so `useRepoSecurity` re-runs
+    // `withTriage` once it has both. What this pass settles is `exposure` and
+    // the `no-fix` findings, neither of which a PR can change.
+    return withTriage({
       id:              String(alert.number),
       packageName:     alert.dependency?.package?.name || 'unknown',
       ecosystem:       alert.dependency?.package?.ecosystem || 'unknown',
@@ -183,6 +188,6 @@ function toAdvisory(repo: string) {
       // work, and the chart measures outstanding work.
       closedAt:        alert.fixed_at || alert.dismissed_at || alert.auto_dismissed_at || null,
       url:             alert.html_url || `https://github.com/${ repo }/security/dependabot/${ alert.number }`,
-    };
+    }, []);
   };
 }

@@ -1,10 +1,12 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
+import CopyToClipboard from '@shell/components/CopyToClipboard.vue';
 import SortableTable from '@shell/components/SortableTable/index.vue';
 
-import { Advisory, PackageGroup, VulnSource } from '../types/security';
+import { Advisory, PackageGroup, TriageStatus, VulnSource } from '../types/security';
 import { TableHeader } from '../types/table';
 import { severityRank } from '../utils/severity';
+import { nonShippedSegment, Remediation, remediationCommand, TRIAGE_ORDER } from '../utils/triage';
 import { i18nMixin } from '../utils/i18n';
 
 /** One label/value pair in an expanded advisory. */
@@ -27,6 +29,21 @@ interface DetailField {
 const NVD_BASE = 'https://nvd.nist.gov/vuln/detail/';
 
 /**
+ * One glyph per status.
+ *
+ * Always beside the word, never instead of it — the same rule the severity
+ * badges follow. `no-fix` takes the neutral mark rather than the error one:
+ * twelve of `rancher/dashboard`'s eighteen findings are unfixable, and a column
+ * of red crosses against the rows nobody can act on would drown the one row
+ * somebody can.
+ */
+const TRIAGE_ICONS: Record<TriageStatus, string> = {
+  'fix-ready': 'icon-notify-warning',
+  'in-review': 'icon-commit',
+  'no-fix':    'icon-x',
+};
+
+/**
  * A repo's vulnerable packages, expandable to the advisories behind each one.
  *
  * One row per package rather than per advisory: `js-yaml` raising six
@@ -37,7 +54,7 @@ export default defineComponent({
 
   mixins: [i18nMixin],
 
-  components: { SortableTable },
+  components: { CopyToClipboard, SortableTable },
 
   props: {
     rows: {
@@ -62,6 +79,12 @@ export default defineComponent({
       const headers: TableHeader[] = [
         {
           name: 'name', labelKey: 'extensionsCenter.security.cols.package', value: 'name', sort: ['name']
+        },
+        // Ahead of severity on purpose. Severity says how bad it would be;
+        // this says whether anyone can do anything about it today, and sorting
+        // on it puts the rows that need a pull request at the top.
+        {
+          name: 'triage', labelKey: 'extensionsCenter.security.cols.triage', value: 'triageOrder', sort: ['triageOrder', 'severityOrder', 'name']
         },
         {
           name: 'worstSeverity', labelKey: 'extensionsCenter.security.cols.severity', value: 'severityOrder', sort: ['severityOrder', 'name']
@@ -103,14 +126,36 @@ export default defineComponent({
      *
      * `severityOrder` exists because sorting on the severity *word* puts
      * critical after high alphabetically, which is exactly backwards.
+     * `triageOrder` is the same problem: alphabetically "no fix" would sort
+     * above "needs a PR", burying the only actionable rows.
      */
-    tableRows(): (PackageGroup & { severityOrder: number; count: number; manifestCount: number })[] {
+    tableRows(): (PackageGroup & { severityOrder: number; triageOrder: number; count: number; manifestCount: number })[] {
       return this.rows.map((row) => ({
         ...row,
         severityOrder: severityRank(row.worstSeverity),
+        triageOrder:   TRIAGE_ORDER.indexOf(row.triage),
         count:         row.advisories.length,
         manifestCount: row.manifests.length,
       }));
+    },
+
+    /**
+     * The copyable fix per advisory, built once rather than per render.
+     *
+     * Keyed by advisory id because the sub-row template would otherwise call
+     * `remediationCommand` four times for every expanded advisory — once to
+     * decide whether to render the block and three more to fill it.
+     */
+    fixes(): Record<string, Remediation | null> {
+      const out: Record<string, Remediation | null> = {};
+
+      for (const group of this.rows) {
+        for (const advisory of group.advisories) {
+          out[advisory.id] = remediationCommand(advisory);
+        }
+      }
+
+      return out;
     },
   },
 
@@ -121,6 +166,35 @@ export default defineComponent({
 
     cveUrl(cve: string): string {
       return `${ NVD_BASE }${ encodeURIComponent(cve) }`;
+    },
+
+    triageIcon(status: TriageStatus): string {
+      return TRIAGE_ICONS[status];
+    },
+
+    triageLabel(status: TriageStatus): string {
+      return this.t(`extensionsCenter.security.triage.${ status }.label`);
+    },
+
+    triageHint(status: TriageStatus): string {
+      return this.t(`extensionsCenter.security.triage.${ status }.description`);
+    },
+
+    /**
+     * The tooling note for one advisory, or null.
+     *
+     * Quotes the directory that triggered it rather than asserting "not
+     * shipped" on its own authority. The match is a path guess, and a reader
+     * who can see it matched `cypress` can tell at once whether it is right.
+     */
+    toolingNote(advisory: Advisory): string | null {
+      const segment = nonShippedSegment(advisory.manifest);
+
+      if (advisory.exposure !== 'tooling' || !segment) {
+        return null;
+      }
+
+      return this.t('extensionsCenter.security.exposure.note', { segment });
     },
 
     /**
@@ -194,6 +268,26 @@ export default defineComponent({
     <template #cell:name="{ row }">
       <span class="pkg">{{ row.name }}</span>
       <span class="text-muted ecosystem">{{ row.ecosystem }}</span>
+    </template>
+
+    <!--
+      Icon plus word, never the icon alone, and the colour sits on the icon
+      rather than on the text: `--warning` as 13px body copy is barely legible
+      on the light theme, which is the same reason the patched column uses
+      `text-error` for its own bad state.
+    -->
+    <template #cell:triage="{ row }">
+      <span
+        class="triage"
+        :class="`triage-${ row.triage }`"
+        :title="triageHint(row.triage)"
+      >
+        <i
+          class="icon"
+          :class="triageIcon(row.triage)"
+        />
+        {{ triageLabel(row.triage) }}
+      </span>
     </template>
 
     <template #cell:worstSeverity="{ row }">
@@ -281,6 +375,19 @@ export default defineComponent({
                 >{{ advisory.cve }}</a>
 
                 <!--
+                  An annotation, not a badge, and it never removes the row:
+                  this is a guess read off a path, so it says which path, in
+                  muted ink, next to everything else that is a fact.
+                -->
+                <span
+                  v-if="toolingNote(advisory)"
+                  class="tooling text-muted"
+                >
+                  <i class="icon icon-info" />
+                  {{ toolingNote(advisory) }}
+                </span>
+
+                <!--
                   Glyph plus words, never the glyph alone: this is the one fact
                   that decides whether the row is actionable today.
                 -->
@@ -317,6 +424,48 @@ export default defineComponent({
                   </dd>
                 </template>
               </dl>
+
+              <!--
+                What to do about it, last: everything above describes the
+                finding, and this is the only part someone acts on.
+
+                Either a link to the pull request that already does it, or the
+                command that would — never both, because a finding with an open
+                PR does not want a second, conflicting fix pasted over it.
+              -->
+              <div
+                v-if="advisory.prFix"
+                class="next"
+              >
+                <span class="next-label">{{ t('extensionsCenter.security.detail.pr', { number: advisory.prFix.number }) }}</span>
+                <a
+                  :href="advisory.prFix.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ advisory.prFix.title }}</a>
+                <span
+                  v-if="advisory.prFix.draft"
+                  class="text-muted"
+                >{{ t('extensionsCenter.security.detail.prDraft') }}</span>
+              </div>
+
+              <div
+                v-else-if="fixes[advisory.id]"
+                class="next"
+              >
+                <span class="next-label">
+                  {{ fixes[advisory.id].file
+                    ? t('extensionsCenter.security.detail.remediationIn', { file: fixes[advisory.id].file })
+                    : t('extensionsCenter.security.detail.remediation') }}
+                </span>
+                <code>{{ fixes[advisory.id].command }}</code>
+                <CopyToClipboard
+                  :text="fixes[advisory.id].command"
+                  :show-label="false"
+                  :aria-label="t('extensionsCenter.security.detail.copy')"
+                  class="copy"
+                />
+              </div>
             </div>
           </div>
         </td>
@@ -354,6 +503,32 @@ export default defineComponent({
   // the same grey as disabled text. Low and unknown take dark ink; see
   // `$low-na-text`.
   @include severity-fill('sev-');
+}
+
+// Colour on the glyph only, with the word always beside it. `no-fix` stays
+// muted rather than red: it is the largest group and the one nobody can act
+// on, so colouring it would make the exception impossible to spot.
+.triage {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+
+  .icon {
+    font-size: 16px;
+  }
+
+  &.triage-fix-ready .icon {
+    color: var(--warning);
+  }
+
+  &.triage-in-review .icon {
+    color: var(--info);
+  }
+
+  &.triage-no-fix .icon {
+    color: var(--disabled-text);
+  }
 }
 
 .advisories {
@@ -402,6 +577,49 @@ export default defineComponent({
 .fix.no-fix,
 .fix.no-fix .icon {
   color: var(--error);
+}
+
+// Sits in the header row with the identifiers, so it wraps with them rather
+// than pushing the fix state off the end on a narrow screen.
+.tooling {
+  align-items: center;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+
+  .icon {
+    font-size: 14px;
+  }
+}
+
+// The action, so it is allowed to look like one: a rule above it separates it
+// from the description of the finding, and the command keeps a mono face
+// because it is meant to be read character by character before being pasted.
+.next {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+
+  code {
+    background: var(--box-bg);
+    border-radius: 3px;
+    padding: 2px 6px;
+  }
+}
+
+.next-label {
+  color: var(--disabled-text);
+}
+
+// `AsyncButton` is sized for a form row; in a dense list it only needs to be
+// as tall as the line it sits on.
+.copy {
+  line-height: 1;
 }
 
 // Capped rather than full-bleed. The sub-row spans every column, and a GitHub
