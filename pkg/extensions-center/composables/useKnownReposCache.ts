@@ -91,13 +91,19 @@ export function useKnownReposCache(store: RancherStore) {
    *
    * Rows are already sorted by score, so trimming to fit drops the least
    * interesting extensions rather than an arbitrary slice.
+   *
+   * `fetchedAt` is a parameter because not every write is a rebuild. The
+   * Describe with AI action rewrites the same rows with descriptions attached
+   * and reads nothing from GitHub, so stamping it with the current time would
+   * reset the staleness clock and have the page claim month-old repo data was
+   * fetched moments ago. It passes the timestamp it loaded.
    */
-  const write = async(repos: KnownRepo[]): Promise<void> => {
+  const write = async(repos: KnownRepo[], fetchedAt?: Date | null): Promise<void> => {
     let kept = repos;
 
     const encode = () => JSON.stringify({
       version:   KNOWN_REPOS_CACHE_VERSION,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: (fetchedAt || new Date()).toISOString(),
       repos:     kept,
     } satisfies KnownReposDoc);
 

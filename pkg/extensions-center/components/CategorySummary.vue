@@ -5,7 +5,12 @@ import { CategorySummary, RepoOrigin } from '../types/repos';
 import { i18nMixin } from '../utils/i18n';
 
 /**
- * Total extension count plus the SUSE/external split.
+ * Total extension count, the SUSE/external split, and — once someone has run
+ * Describe with AI — what the model sorted them into.
+ *
+ * Both breakdowns are shown rather than one replacing the other: who owns a
+ * repo and what it does are different questions, and the origin split is the
+ * only one available on a table nobody has described.
  *
  * Covers the whole known set, official repos included, not just the community
  * rows shown in the table next to it.
@@ -29,8 +34,19 @@ export default defineComponent({
   },
 
   computed: {
-    max(): number {
+    originMax(): number {
       return this.summary.byOrigin.reduce((m, c) => Math.max(m, c.count), 0);
+    },
+
+    /**
+     * Scaled separately from the origin bars.
+     *
+     * There are a dozen categories and two origins, so sharing a scale would
+     * flatten every category bar against a SUSE/external count an order of
+     * magnitude larger and make the breakdown unreadable.
+     */
+    categoryMax(): number {
+      return this.summary.byCategory.reduce((m, c) => Math.max(m, c.count), 0);
     },
   },
 
@@ -39,8 +55,8 @@ export default defineComponent({
       return this.t(`extensionsCenter.knownRepos.${ origin }`);
     },
 
-    barWidth(count: number): string {
-      return this.max ? `${ Math.round((count / this.max) * 100) }%` : '0%';
+    barWidth(count: number, max: number): string {
+      return max ? `${ Math.round((count / max) * 100) }%` : '0%';
     },
   },
 });
@@ -53,6 +69,8 @@ export default defineComponent({
       <span class="text-muted">{{ t('extensionsCenter.knownRepos.summary.total') }}</span>
     </div>
 
+    <h4>{{ t('extensionsCenter.knownRepos.summary.origins') }}</h4>
+
     <ul class="categories">
       <li
         v-for="entry in summary.byOrigin"
@@ -63,12 +81,44 @@ export default defineComponent({
           <span
             class="fill"
             :class="entry.origin"
-            :style="{ width: barWidth(entry.count) }"
+            :style="{ width: barWidth(entry.count, originMax) }"
           />
         </span>
         <span class="value">{{ entry.count }}</span>
       </li>
     </ul>
+
+    <h4>{{ t('extensionsCenter.knownRepos.summary.categories') }}</h4>
+
+    <ul
+      v-if="summary.byCategory.length"
+      class="categories"
+    >
+      <li
+        v-for="entry in summary.byCategory"
+        :key="entry.category"
+      >
+        <span class="name">{{ entry.category }}</span>
+        <span class="bar">
+          <span
+            class="fill"
+            :style="{ width: barWidth(entry.count, categoryMax) }"
+          />
+        </span>
+        <span class="value">{{ entry.count }}</span>
+      </li>
+    </ul>
+
+    <!--
+      Said rather than left blank: an empty panel reads as "the model found
+      nothing", when what it means is that nobody has pressed the button.
+    -->
+    <p
+      v-else
+      class="description text-muted"
+    >
+      {{ t('extensionsCenter.knownRepos.summary.notDescribed') }}
+    </p>
 
     <p
       v-if="description"
@@ -81,6 +131,17 @@ export default defineComponent({
 
 <style lang="scss" scoped>
 .category-summary {
+  h4 {
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    margin: 16px 0 6px;
+    text-transform: uppercase;
+
+    &:first-of-type {
+      margin-top: 0;
+    }
+  }
+
   .total {
     align-items: baseline;
     display: flex;

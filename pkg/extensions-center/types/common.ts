@@ -35,10 +35,17 @@ export interface ExtensionConfig {
 
   anthropicApiKey: string | null;
 
-  awsAccessKeyId: string | null;
-  awsSecretAccessKey: string | null;
-  awsSessionToken: string | null;
-  awsRegion: string | null;
+  /**
+   * The service-account JSON file, verbatim.
+   *
+   * Stored whole rather than split into its fields because that is what the
+   * GCP console hands out and what a user can paste without editing. Only
+   * `client_email`, `private_key` and `token_uri` are ever read from it.
+   */
+  vertexServiceAccount: string | null;
+  vertexProjectId: string | null;
+  /** `global`, a multi-region (`us`, `eu`) or a region (`us-east5`) */
+  vertexRegion: string | null;
 
   /** Workspace API key from the AWS console, not a Bedrock key */
   claudeAwsApiKey: string | null;

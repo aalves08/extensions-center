@@ -100,6 +100,18 @@ const BUILD_TOOLING = new Set([
 const ALREADY_EXTERNAL = new Set(['vue', 'vue-router', 'jquery', 'jszip', 'js-yaml']);
 
 /**
+ * Packages an extension never runs its own copy of, because the host hands it
+ * one at runtime: shell's own code plus the five it externalises.
+ *
+ * Exported for the dependency-impact page, which needs exactly this set and
+ * must not keep a second copy of it. These are the only packages a bump in
+ * `rancher/dashboard` can change underneath an extension that has already
+ * shipped; everything else reaches an extension when it next rebuilds, and
+ * not before.
+ */
+export const HOST_PROVIDED: ReadonlySet<string> = new Set([...SHELL_CODE, ...ALREADY_EXTERNAL]);
+
+/**
  * Transitive dependencies large enough to matter, mapped to the shell
  * dependency that pulls each one in.
  *

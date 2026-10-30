@@ -1,5 +1,6 @@
 import { ref, computed, Ref } from 'vue';
 
+import { CLASSIFIER_DEEP_README_CHARS, CLASSIFIER_README_CHARS, CLASSIFIER_README_CONCURRENCY } from '../config/constants';
 import { GhCodeSearchResponse, GhRelease, GhRepo } from '../types/github';
 import { RancherStore, errorMessage } from '../types/rancher';
 import { CategorySummary, KnownRepo, RepoOrigin } from '../types/repos';
@@ -8,6 +9,7 @@ import { fallbackName } from '../utils/names';
 import { fetchOfficialRepoIds } from './useOfficialRepos';
 import { useGitHubApi, describeGitHubError } from './useGitHubApi';
 import { useKnownReposCache, isStale } from './useKnownReposCache';
+import { ClassifierInput, RecategoriseInput, UNCLASSIFIED, useRepoClassifier } from './useRepoClassifier';
 
 /**
  * The search that finds extension repos: anything referencing the shared
@@ -83,11 +85,18 @@ function scoreRepo(stars: number, releaseCount: number, lastPushedAt: string | n
 export function useKnownRepos(store: RancherStore) {
   const api = useGitHubApi(store);
   const cache = useKnownReposCache(store);
+  const classifier = useRepoClassifier(store);
 
   const data: Ref<KnownRepo[]> = ref([]);
   const loading = ref(false);
   const error: Ref<string | null> = ref(null);
   const lastRefreshed: Ref<Date | null> = ref(null);
+  /** True while the Describe with AI action is running */
+  const describing = ref(false);
+  /** Set when that action could not finish; null after a clean run */
+  const describeError: Ref<string | null> = ref(null);
+  /** Set when a press had nothing to do. Not an error — the table is current. */
+  const describeNote: Ref<string | null> = ref(null);
   /** True when `data` came from the ConfigMap rather than a rebuild */
   const fromCache = ref(false);
   /** True when there is no cached table yet, so the table is empty until asked */
@@ -204,6 +213,7 @@ export function useKnownRepos(store: RancherStore) {
             name:         fallbackName(repo.full_name),
             repoUrl:      repo.html_url,
             description:  repo.description || '',
+            topics:       repo.topics || [],
             isExternal:   isExternalOwner(repo.full_name),
             stars,
             releaseCount: releases.length,
@@ -243,6 +253,172 @@ export function useKnownRepos(store: RancherStore) {
     }
   };
 
+  /** Read a README off the raw CDN, truncated. Missing is not an error. */
+  const readmeExcerpt = async(repo: KnownRepo, chars: number): Promise<string> => {
+    // `HEAD` rather than a branch name: the raw host resolves it to whatever
+    // the repo's default branch is, so this works for repos still on `master`
+    // without storing the branch per row.
+    const readme = await api
+      .getRawText(repo.id, 'HEAD', 'README.md')
+      .catch(() => null);
+
+    return (readme || '').slice(0, chars);
+  };
+
+  /**
+   * Repos nobody has described yet. These need the full first pass.
+   *
+   * Keyed on the description rather than the category because the two are
+   * written together and the description is the one a reader notices missing.
+   */
+  const undescribed = computed(() => data.value.filter((r) => !r.aiDescription));
+
+  /**
+   * Described repos the model could not place.
+   *
+   * These get the category-only second pass. A row whose category is simply
+   * absent is included too: that is what a row described by an older build
+   * looks like, and it needs the same treatment.
+   */
+  const unplaced = computed(() => data.value.filter((r) => {
+    return !!r.aiDescription && (!r.aiCategory || r.aiCategory === UNCLASSIFIED);
+  }));
+
+  /**
+   * Describe new repos, and re-examine the ones that came back `other`.
+   *
+   * Separate from `rebuild()` on purpose. The previous version of this ran
+   * inside the rebuild, so a model that could not be reached took the whole
+   * table down with it and the failure was indistinguishable from a quiet
+   * GitHub problem. As its own action it is re-runnable, it cannot break the
+   * table, and pressing it is an explicit decision to spend tokens.
+   *
+   * It is also incremental, which is what makes it cheap to press twice. A row
+   * that already has a description and a real category is not sent anywhere —
+   * no README fetch, no tokens — because nothing about it would change: the
+   * inputs are the same README and the same prompt. Only two sets cost
+   * anything:
+   *
+   * - repos with no description at all, usually new since the last rebuild,
+   *   which get the full pass;
+   * - repos sitting in `other`, which get a category-only pass with a longer
+   *   README, because those are the ones where the first answer is known to
+   *   be unsatisfying.
+   *
+   * The deliberate consequence is that a row placed in a *wrong but specific*
+   * category stays wrong until the cache is rebuilt. That is the trade for not
+   * paying for 59 repos to re-confirm 46 of them, and it is the right way
+   * round: `other` is the only value that is self-evidently not an answer.
+   *
+   * READMEs come off the raw CDN rather than the REST API, so the GitHub cost
+   * of this is zero — see `getRawText`.
+   */
+  const describe = async(): Promise<void> => {
+    describing.value = true;
+    describeError.value = null;
+    describeNote.value = null;
+
+    try {
+      const rows = data.value;
+
+      if (!rows.length) {
+        return;
+      }
+
+      const toDescribe = undescribed.value;
+      const toPlace = unplaced.value;
+
+      if (!toDescribe.length && !toPlace.length) {
+        describeNote.value = store.getters['i18n/t']('extensionsCenter.knownRepos.describe.upToDate');
+
+        return;
+      }
+
+      const inputs: ClassifierInput[] = await mapWithConcurrency(
+        toDescribe,
+        CLASSIFIER_README_CONCURRENCY,
+        async(repo): Promise<ClassifierInput> => ({
+          id:              repo.id,
+          repoDescription: repo.description,
+          topics:          repo.topics || [],
+          readmeExcerpt:   await readmeExcerpt(repo, CLASSIFIER_README_CHARS),
+        })
+      );
+
+      const deepInputs: RecategoriseInput[] = await mapWithConcurrency(
+        toPlace,
+        CLASSIFIER_README_CONCURRENCY,
+        async(repo): Promise<RecategoriseInput> => ({
+          id:            repo.id,
+          description:   repo.aiDescription || repo.description,
+          topics:        repo.topics || [],
+          readmeExcerpt: await readmeExcerpt(repo, CLASSIFIER_DEEP_README_CHARS),
+        })
+      );
+
+      const outcome = await classifier.classify(inputs);
+      const deep = await classifier.recategorise(deepInputs);
+
+      if (!outcome.available || !deep.available) {
+        describeError.value = store.getters['i18n/t']('extensionsCenter.knownRepos.describe.noCredentials');
+
+        return;
+      }
+
+      data.value = rows.map((repo) => {
+        const result = outcome.results[repo.id];
+
+        if (result) {
+          return {
+            ...repo,
+            aiName:        result.name,
+            aiDescription: result.description,
+            aiCategory:    result.category,
+          };
+        }
+
+        // Category only. The name and description on this row were written by
+        // an earlier pass and were not re-asked for, so they must survive.
+        const placed = deep.categories[repo.id];
+
+        return placed ? { ...repo, aiCategory: placed } : repo;
+      });
+
+      // Reported even though some rows did come back: a partial result that
+      // says nothing about the batches that failed is how the last version of
+      // this looked like it was working.
+      describeError.value = outcome.error || deep.error;
+
+      if (cache.canWrite()) {
+        try {
+          // Keeps the rebuild's timestamp: describing reads nothing from
+          // GitHub, so it must not reset the staleness clock on repo data it
+          // never touched.
+          await cache.write(data.value, lastRefreshed.value);
+        } catch (e) {
+          console.warn('extensions-center: could not persist described repos', e); // eslint-disable-line no-console
+          describeError.value = errorMessage(e);
+        }
+      }
+    } catch (e) {
+      describeError.value = errorMessage(e);
+    } finally {
+      describing.value = false;
+    }
+  };
+
+  /** True once at least one row carries a model-written description. */
+  const described = computed(() => data.value.some((r) => !!r.aiDescription));
+
+  /**
+   * What the next press would actually cost, in rows.
+   *
+   * Exposed so the button can say so before it is pressed. The whole point of
+   * making this incremental is lost if the hint still implies a full re-run.
+   */
+  const pendingDescribe = computed(() => undescribed.value.length);
+  const pendingPlace = computed(() => unplaced.value.length);
+
   /** Community repos only — the dashboard table shows the top slice of these. */
   const community = computed(() => data.value.filter((r) => r.isExternal));
 
@@ -260,7 +436,24 @@ export function useKnownRepos(store: RancherStore) {
       { origin: 'external', count: external },
     ];
 
-    return { total: data.value.length, byOrigin };
+    // Counted off the rows rather than from `REPO_CATEGORIES`, so a category
+    // nothing landed in is absent instead of a row of zeroes, and a value the
+    // model invented still shows up rather than vanishing silently.
+    const counts = new Map<string, number>();
+
+    data.value.forEach((repo) => {
+      if (repo.aiCategory) {
+        counts.set(repo.aiCategory, (counts.get(repo.aiCategory) || 0) + 1);
+      }
+    });
+
+    const byCategory = [...counts.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category));
+
+    return {
+      total: data.value.length, byOrigin, byCategory
+    };
   });
 
   return {
@@ -273,7 +466,14 @@ export function useKnownRepos(store: RancherStore) {
     fromCache,
     needsBuild,
     stale,
+    describing,
+    describeError,
+    describeNote,
+    described,
+    pendingDescribe,
+    pendingPlace,
     load,
     rebuild,
+    describe,
   };
 }

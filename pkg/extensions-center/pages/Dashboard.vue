@@ -18,6 +18,7 @@ import {
 import { EXTENSIONS_DOCS_URL } from '../config/links';
 import { useExtensionConfig } from '../composables/useExtensionConfig';
 import { useKnownRepos } from '../composables/useKnownRepos';
+import { ensureProxyTargets, llmProxyTargets } from '../composables/useLlmProxy';
 import { useManifestPrs } from '../composables/useManifestPrs';
 import { useOfficialRepos } from '../composables/useOfficialRepos';
 import { useProxyEndpoint } from '../composables/useProxyEndpoint';
@@ -90,14 +91,23 @@ async function refreshAll(done?: Done) {
 
 onMounted(async() => {
   // Credentials first: every other request wants the GitHub token, and loading
-  // it once here keeps the refreshes below from racing for it.
-  await loadConfig();
+  // it once here keeps the refreshes below from racing for it. The LLM hosts
+  // below are read out of the same config, so this has to come first either way.
+  const cfg = await loadConfig();
 
   // Register api.github.com with Rancher's proxy before anything tries to use
   // it. Code search cannot be called from a browser at all without this, and
   // getting it in place on entry means an admin never has to apply YAML by
   // hand. Failures here are reported, not thrown — the rest of the page works.
   await proxyEndpoint.ensure();
+
+  // The LLM hosts, on the same reasoning. Only an admin may create these, and
+  // only Vertex's is used today — but doing it here means the one admin who
+  // opens the dashboard sets them up for everyone, instead of a standard user
+  // hitting a refusal they have no way to clear the first time they run a
+  // classification. Best effort and silent: `ensure` reports its own failures,
+  // and a provider nobody has configured is not worth a banner.
+  await ensureProxyTargets(store, llmProxyTargets(cfg));
 
   // Reads the cached table out of the ConfigMap. No GitHub calls, no model.
   await Promise.allSettled([refreshAll(), knownRepos.load()]);

@@ -113,6 +113,49 @@ function bump(map: Map<string, ExtensionImportPath>, path: string, specifiers: s
   map.set(path, entry);
 }
 
+/**
+ * Rebuild the three cross-extension aggregates from the per-extension detail.
+ *
+ * What makes a single-extension refresh possible at all. The aggregates look
+ * like they need every extension re-scanned, but every input to them is
+ * already in `detail` — counts, the extensions that contributed them, and the
+ * resolved byte size of each path — so re-reading one extension's sources is
+ * enough and the other ten are summed from what is already stored.
+ *
+ * Sizes are taken from the detail rows rather than re-resolved. A row that was
+ * measured against an older `rancher/dashboard` tree keeps the size it was
+ * measured with, which is the honest answer: it is what that reading saw.
+ */
+function rebuildAggregates(doc: ImportAnalysisDoc): Pick<ImportAnalysisDoc, 'shellPaths' | 'componentsPaths' | 'externalPkgs'> {
+  const collect = (pick: (d: ExtensionImportDetail) => ExtensionImportPath[]) => {
+    const agg = new Map<string, AggregateImportPath>();
+
+    for (const name of Object.keys(doc.detail)) {
+      for (const row of pick(doc.detail[name]) || []) {
+        const entry = agg.get(row.path) || {
+          path: row.path, total: 0, exts: [], bytes: row.bytes ?? null
+        };
+
+        entry.total += row.count;
+        entry.exts.push(name);
+        // First row to resolve a size wins. Every extension importing one path
+        // resolves it to the same file, so a later null is a reading taken
+        // against a tree that no longer had it, not a correction.
+        entry.bytes = entry.bytes ?? row.bytes ?? null;
+        agg.set(row.path, entry);
+      }
+    }
+
+    return [...agg.values()].sort((a, b) => b.exts.length - a.exts.length || b.total - a.total);
+  };
+
+  return {
+    shellPaths:      collect((d) => d.shell),
+    componentsPaths: collect((d) => d.components),
+    externalPkgs:    collect((d) => d.external),
+  };
+}
+
 /** Sorted, size-annotated rows out of one of the accumulator's maps. */
 function toRows(
   map: Map<string, ExtensionImportPath>,
@@ -159,6 +202,35 @@ export function useImportAnalysis(store: RancherStore) {
     }
   };
 
+  /**
+   * Resolvers for the source size behind a shell or components import path.
+   *
+   * Every file in `rancher/dashboard` in one request. Doing this per import
+   * path would be a thousand round trips for the same answer, which is also
+   * why a single-extension refresh still pays for it — one large call is the
+   * cheap part of that job, not the expensive one.
+   */
+  const moduleSizes = async() => {
+    const dashboardTree = await api.getTree(DASHBOARD_REPO, DASHBOARD_BRANCH);
+
+    if (dashboardTree.truncated) {
+      throw new Error(store.getters['i18n/t']('extensionsCenter.analysis.errors.treeTruncated'));
+    }
+
+    const sizes = new Map<string, number>();
+
+    dashboardTree.tree.forEach((entry) => {
+      if (entry.type === 'blob' && entry.size !== undefined) {
+        sizes.set(entry.path, entry.size);
+      }
+    });
+
+    return {
+      shellSize:      (path: string) => resolveSize(shellCandidates(path), sizes),
+      componentsSize: (path: string) => resolveSize(componentsCandidates(path), sizes),
+    };
+  };
+
   /** Read one extension's sources and count what they import. */
   const scanExtension = async(target: AnalysisTarget): Promise<{
     totals: ExtensionImportTotals;
@@ -169,6 +241,10 @@ export function useImportAnalysis(store: RancherStore) {
       name:             target.name,
       repo:             target.repo,
       semver:           target.semver,
+      // Carried onto the row so a later freshness check can say what this
+      // reading was taken at without re-resolving every target to find out.
+      tag:              target.tag,
+      source:           target.source,
       inManifest:       target.inManifest,
       fileCount:        0,
       shell:            0,
@@ -295,22 +371,7 @@ export function useImportAnalysis(store: RancherStore) {
         phase: 'modules', done: 0, total: 1
       };
 
-      const dashboardTree = await api.getTree(DASHBOARD_REPO, DASHBOARD_BRANCH);
-
-      if (dashboardTree.truncated) {
-        throw new Error(store.getters['i18n/t']('extensionsCenter.analysis.errors.treeTruncated'));
-      }
-
-      const sizes = new Map<string, number>();
-
-      dashboardTree.tree.forEach((entry) => {
-        if (entry.type === 'blob' && entry.size !== undefined) {
-          sizes.set(entry.path, entry.size);
-        }
-      });
-
-      const shellSize = (path: string) => resolveSize(shellCandidates(path), sizes);
-      const componentsSize = (path: string) => resolveSize(componentsCandidates(path), sizes);
+      const { shellSize, componentsSize } = await moduleSizes();
 
       let done = 0;
 
@@ -420,7 +481,67 @@ export function useImportAnalysis(store: RancherStore) {
     }
   };
 
+  /**
+   * Re-read one extension at a new version and fold it back into the stored
+   * document.
+   *
+   * The cheap half of a refresh. A full rebuild re-reads roughly 1,150 files
+   * across eleven repos; this reads one repo's tree plus its own sources, and
+   * recomputes the aggregates arithmetically from what is already stored.
+   *
+   * Returns silently when there is no document to merge into — there is
+   * nothing to be stale *against* before a first full build, and quietly
+   * creating a one-extension document would make the page look analysed when
+   * ten extensions have never been read.
+   */
+  const refreshOne = async(target: AnalysisTarget): Promise<void> => {
+    const current = doc.value;
+
+    if (!current) {
+      return;
+    }
+
+    const { shellSize, componentsSize } = await moduleSizes();
+    const result = await scanExtension(target);
+
+    const shellRows = toRows(result.acc.shell, shellSize);
+    const componentsRows = toRows(result.acc.components, componentsSize);
+
+    const row: ExtensionImportTotals = {
+      ...result.totals,
+      shellBytes:      shellRows.reduce((sum, r) => sum + (r.bytes || 0), 0),
+      componentsBytes: componentsRows.reduce((sum, r) => sum + (r.bytes || 0), 0),
+      // Only this row moves, so only this row's timestamp does. The document's
+      // own `fetchedAt` still describes every extension that was not re-read.
+      fetchedAt:       new Date().toISOString(),
+    };
+
+    const detail = {
+      ...current.detail,
+      [target.name]: {
+        shell:      shellRows,
+        components: componentsRows,
+        external:   toRows(result.acc.external, null).map(({ specifiers, ...rest }) => rest),
+      },
+    };
+
+    const totals = current.totals.filter((t) => t.name !== target.name).concat(row);
+
+    const merged: ImportAnalysisDoc = {
+      ...current,
+      totals: totals.sort((a, b) => b.shellBytes - a.shellBytes),
+      detail,
+      ...rebuildAggregates({ ...current, detail }),
+    };
+
+    doc.value = merged;
+
+    if (cache.canWrite()) {
+      await cache.write(merged);
+    }
+  };
+
   return {
-    doc, loading, rebuilding, error, progress, needsBuild, stale, load, rebuild
+    doc, loading, rebuilding, error, progress, needsBuild, stale, load, rebuild, refreshOne
   };
 }

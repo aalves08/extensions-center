@@ -33,11 +33,16 @@ const BARE_VERSION = /^v?\d+(\.\d+)*(?:[-+.].*)?$/;
  * from used a plain `/^v/`, which is why its published report contains
  * `irtual-clusters-1.2.0` and `ulnerability-scanner-0.9.0`.
  */
-export function semverFromTag(extName: string, tag: string): string {
+/** Matches `kubewarden-` / `observability@` at the head of one of its tags. */
+function namePrefix(extName: string): RegExp {
   const escaped = extName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+  return new RegExp(`^${ escaped }[-@]`, 'i');
+}
+
+export function semverFromTag(extName: string, tag: string): string {
   return tag
-    .replace(new RegExp(`^${ escaped }[-@]`, 'i'), '')
+    .replace(namePrefix(extName), '')
     .replace(/^v(?=\d)/, '');
 }
 
@@ -55,7 +60,13 @@ export function semverFromTag(extName: string, tag: string): string {
 export type TagMatch = 'named' | 'bare' | 'other';
 
 export function matchTag(extName: string, tag: string): TagMatch {
-  if (semverFromTag(extName, tag) !== tag) {
+  // Asks whether the *name* is there, rather than whether `semverFromTag`
+  // changed the string. Those differ for every `v`-prefixed tag: stripping the
+  // `v` off `v1.9.0` is a change, so comparing before and after calls it
+  // `named` and lets `tagBelongsTo` accept it even in a repo publishing
+  // several extensions — which is the misattribution this module exists to
+  // prevent.
+  if (namePrefix(extName).test(tag)) {
     return 'named';
   }
 

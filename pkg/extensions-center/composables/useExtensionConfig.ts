@@ -13,16 +13,17 @@ import {
 } from '../config/constants';
 import { ExtensionConfig, LlmProvider } from '../types/common';
 import { RancherStore, SteveResource, SteveSchema, storeErrorStatus } from '../types/rancher';
+import { clearVertexTokenCache } from './useVertexAuth';
 
 const EMPTY: ExtensionConfig = {
-  githubToken:        null,
-  llmProvider:        DEFAULT_LLM_PROVIDER,
-  llmModel:           null,
-  anthropicApiKey:    null,
-  awsAccessKeyId:     null,
-  awsSecretAccessKey: null,
-  awsSessionToken:    null,
-  awsRegion:          null,
+  githubToken:     null,
+  llmProvider:     DEFAULT_LLM_PROVIDER,
+  llmModel:        null,
+  anthropicApiKey: null,
+
+  vertexServiceAccount: null,
+  vertexProjectId:      null,
+  vertexRegion:         null,
 
   claudeAwsApiKey:      null,
   claudeAwsWorkspaceId: null,
@@ -36,8 +37,10 @@ function isProvider(value: string | null): value is LlmProvider {
 /** True when the selected provider has everything it needs to be called. */
 export function hasLlmCredentials(cfg: ExtensionConfig): boolean {
   switch (cfg.llmProvider) {
-  case 'bedrock':
-    return !!cfg.awsAccessKeyId && !!cfg.awsSecretAccessKey;
+  case 'vertex':
+    // The region has a usable default; the other two do not. A service
+    // account alone cannot say which project to bill or reach.
+    return !!cfg.vertexServiceAccount && !!cfg.vertexProjectId;
   case 'claudeAws':
     // The workspace id is not optional and not derivable from the key, so a
     // key on its own is not a usable credential here.
@@ -49,9 +52,9 @@ export function hasLlmCredentials(cfg: ExtensionConfig): boolean {
 
 /** Everything the Settings form can write. All optional — blank means "skip". */
 export type SaveValues = Partial<Record<
-  'githubToken' | 'anthropicApiKey' | 'awsAccessKeyId' | 'awsSecretAccessKey' |
-  'awsSessionToken' | 'claudeAwsApiKey' | 'llmProvider' | 'llmModel' |
-  'awsRegion' | 'claudeAwsWorkspaceId' | 'claudeAwsRegion',
+  'githubToken' | 'anthropicApiKey' | 'vertexServiceAccount' | 'claudeAwsApiKey' |
+  'llmProvider' | 'llmModel' | 'vertexProjectId' | 'vertexRegion' |
+  'claudeAwsWorkspaceId' | 'claudeAwsRegion',
   string
 >>;
 
@@ -59,9 +62,9 @@ export type SaveValues = Partial<Record<
 const CREDENTIAL_FIELDS: [keyof SaveValues, string][] = [
   ['githubToken', SECRET_KEYS.GITHUB_TOKEN],
   ['anthropicApiKey', SECRET_KEYS.ANTHROPIC_KEY],
-  ['awsAccessKeyId', SECRET_KEYS.AWS_ACCESS_KEY_ID],
-  ['awsSecretAccessKey', SECRET_KEYS.AWS_SECRET_ACCESS_KEY],
-  ['awsSessionToken', SECRET_KEYS.AWS_SESSION_TOKEN],
+  // The service-account JSON holds a private key, so it is write-only like
+  // any other secret — the form shows whether one is stored, never its text.
+  ['vertexServiceAccount', SECRET_KEYS.VERTEX_SERVICE_ACCOUNT],
   ['claudeAwsApiKey', SECRET_KEYS.CLAUDE_AWS_API_KEY],
 ];
 
@@ -69,7 +72,8 @@ const CREDENTIAL_FIELDS: [keyof SaveValues, string][] = [
 const PLAIN_FIELDS: [keyof SaveValues, string][] = [
   ['llmProvider', SECRET_KEYS.LLM_PROVIDER],
   ['llmModel', SECRET_KEYS.LLM_MODEL],
-  ['awsRegion', SECRET_KEYS.AWS_REGION],
+  ['vertexProjectId', SECRET_KEYS.VERTEX_PROJECT_ID],
+  ['vertexRegion', SECRET_KEYS.VERTEX_REGION],
   ['claudeAwsWorkspaceId', SECRET_KEYS.CLAUDE_AWS_WORKSPACE_ID],
   ['claudeAwsRegion', SECRET_KEYS.CLAUDE_AWS_REGION],
 ];
@@ -104,14 +108,14 @@ function decodeSecret(secret: SteveResource | null): ExtensionConfig {
   const provider = read(SECRET_KEYS.LLM_PROVIDER);
 
   return {
-    githubToken:        read(SECRET_KEYS.GITHUB_TOKEN),
-    llmProvider:        isProvider(provider) ? provider : DEFAULT_LLM_PROVIDER,
-    llmModel:           read(SECRET_KEYS.LLM_MODEL),
-    anthropicApiKey:    read(SECRET_KEYS.ANTHROPIC_KEY),
-    awsAccessKeyId:     read(SECRET_KEYS.AWS_ACCESS_KEY_ID),
-    awsSecretAccessKey: read(SECRET_KEYS.AWS_SECRET_ACCESS_KEY),
-    awsSessionToken:    read(SECRET_KEYS.AWS_SESSION_TOKEN),
-    awsRegion:          read(SECRET_KEYS.AWS_REGION),
+    githubToken:     read(SECRET_KEYS.GITHUB_TOKEN),
+    llmProvider:     isProvider(provider) ? provider : DEFAULT_LLM_PROVIDER,
+    llmModel:        read(SECRET_KEYS.LLM_MODEL),
+    anthropicApiKey: read(SECRET_KEYS.ANTHROPIC_KEY),
+
+    vertexServiceAccount: read(SECRET_KEYS.VERTEX_SERVICE_ACCOUNT),
+    vertexProjectId:      read(SECRET_KEYS.VERTEX_PROJECT_ID),
+    vertexRegion:         read(SECRET_KEYS.VERTEX_REGION),
 
     claudeAwsApiKey:      read(SECRET_KEYS.CLAUDE_AWS_API_KEY),
     claudeAwsWorkspaceId: read(SECRET_KEYS.CLAUDE_AWS_WORKSPACE_ID),
@@ -231,6 +235,9 @@ export function useExtensionConfig(store: RancherStore) {
       await created.save();
     }
 
+    // A new service account must not inherit the previous one's token.
+    clearVertexTokenCache();
+
     await load(true);
   };
 
@@ -248,6 +255,9 @@ export function useExtensionConfig(store: RancherStore) {
 
     secret.data = data;
     await secret.save();
+
+    // A new service account must not inherit the previous one's token.
+    clearVertexTokenCache();
 
     await load(true);
   };

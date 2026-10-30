@@ -219,7 +219,41 @@ export function useInventory(store: RancherStore) {
     }
   };
 
+  /**
+   * Re-read one extension's lockfile and fold it back in.
+   *
+   * The cheapest third of a single-extension refresh: one tree listing and one
+   * file. Returns silently with no stored document — there is nothing to merge
+   * into, and the same reasoning as the two analysis pipelines applies.
+   */
+  const refreshOne = async(target: AnalysisTarget): Promise<void> => {
+    const current = doc.value;
+
+    if (!current) {
+      return;
+    }
+
+    const row: InventoryExtension = {
+      ...await readExtension(target),
+      fetchedAt: new Date().toISOString(),
+    };
+
+    const merged: InventoryDoc = {
+      ...current,
+      extensions: current.extensions
+        .filter((e) => e.name !== target.name)
+        .concat(row)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+
+    doc.value = merged;
+
+    if (cache.canWrite()) {
+      await cache.write(merged);
+    }
+  };
+
   return {
-    doc, loading, rebuilding, error, progress, needsBuild, stale, load, rebuild
+    doc, loading, rebuilding, error, progress, needsBuild, stale, load, rebuild, refreshOne
   };
 }

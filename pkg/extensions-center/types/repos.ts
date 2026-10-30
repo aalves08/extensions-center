@@ -62,6 +62,15 @@ export interface KnownRepo {
   repoUrl: string;
   /** GitHub's own repo description, often empty */
   description: string;
+  /**
+   * GitHub repo topics, which the classifier reads as a hint.
+   *
+   * Optional because a document cached before this field existed has none,
+   * and that is not worth a cache-version bump: discarding every stored table
+   * to re-fetch a hint field would cost hundreds of GitHub requests to gain
+   * nothing a reader can see.
+   */
+  topics?: string[];
   /** True when the repo is not owned by a SUSE/Rancher org */
   isExternal: boolean;
   /** Signals feeding the "top 10" ranking */
@@ -70,12 +79,36 @@ export interface KnownRepo {
   lastPushedAt: string | null;
   /** Computed popularity score used to sort the table */
   score: number;
+
+  /**
+   * What the model made of the repo, when someone has asked it.
+   *
+   * All three are optional and all three are absent together: this is filled
+   * in by the Describe with AI action on the known-repos page, never by a
+   * rebuild. Optional rather than defaulted so "nobody has run it" and "the
+   * model had nothing to say" stay distinguishable — the earlier version of
+   * this feature defaulted the category to `other` and made a broken model
+   * call look like a working one. For the same reason the cache version is
+   * *not* bumped for these: a document written before they existed is a
+   * perfectly good unclassified document, not a stale one.
+   */
+  aiName?: string;
+  aiDescription?: string;
+  aiCategory?: string;
 }
 
-/** Total plus a SUSE/external split, rendered next to the known repos table */
+/** Total plus the two breakdowns rendered next to the known repos table */
 export interface CategorySummary {
   total: number;
   byOrigin: { origin: RepoOrigin; count: number }[];
+  /**
+   * Counts per model-written category, commonest first.
+   *
+   * Empty until someone runs Describe with AI, which is the only thing that
+   * sets `aiCategory` — so an empty array means "nobody has asked", not "no
+   * categories found", and the panel says so rather than drawing nothing.
+   */
+  byCategory: { category: string; count: number }[];
 }
 
 /**
