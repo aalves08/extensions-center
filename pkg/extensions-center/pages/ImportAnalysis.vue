@@ -14,8 +14,10 @@ import ExtensionImportDetailView from '../components/ExtensionImportDetail.vue';
 import ImportPathsTable from '../components/ImportPathsTable.vue';
 import ImportTotalsTable from '../components/ImportTotalsTable.vue';
 import SectionHeader from '../components/SectionHeader.vue';
+import SymbolImpact from '../components/SymbolImpact.vue';
 import { useImportAnalysis } from '../composables/useImportAnalysis';
 import { buildApiSurface } from '../utils/apiSurface';
+import { buildSymbolIndex } from '../utils/symbolIndex';
 import { useTranslation } from '../utils/i18n';
 
 const t = useTranslation();
@@ -65,6 +67,16 @@ const unresolved = computed(() => (doc.value?.shellPaths || []).filter((p) => p.
  * costs no extra fetch and needs no rebuild to appear.
  */
 const surface = computed(() => buildApiSurface(doc.value));
+
+/**
+ * The same specifiers again, keyed by symbol instead of by path.
+ *
+ * The surface view answers "what comes out of this path"; this answers "who
+ * would I break by changing this name", which is the direction the question
+ * is actually asked in. Both are derived from `detail`, so neither costs a
+ * fetch and the two can never disagree.
+ */
+const symbolIndex = computed(() => buildSymbolIndex(doc.value));
 
 /** Only the paths with something wrong with them; the default view of the tab. */
 const riskyPaths = computed(() => surface.value.paths.filter((p) => p.risk !== 'ok'));
@@ -292,6 +304,19 @@ onMounted(() => analysis.load());
           </div>
 
           <ApiSurfaceTable :rows="surfaceRows" />
+        </Tab>
+
+        <!--
+          Next to the surface tab rather than at the end: it is the same data
+          read the other way round, and the two are used in one sitting — find
+          a risky path, then find out who it would break.
+        -->
+        <Tab
+          name="symbols"
+          :label="t('extensionsCenter.importAnalysis.tabs.symbols')"
+          :weight="52"
+        >
+          <SymbolImpact :index="symbolIndex" />
         </Tab>
 
         <Tab

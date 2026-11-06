@@ -285,6 +285,72 @@ extensionsCenter:
     exposureTitle: Exposure by extension
     pathsTitle: Paths
     showAllPaths: 'Show all {count} shell paths, not just the ones needing attention'
+    scope:
+      shell: '@rancher/shell'
+      components: '@rancher/components'
+    symbols:
+      description: >-
+        Every named export the extensions take out of @rancher/shell and
+        @rancher/components, listed by symbol rather than by path. Filter for
+        a name to see which extensions would have to change if it moved,
+        changed signature or went away.
+      filterLabel: Symbol or path
+      filterPlaceholder: 'e.g. downloadFile, or utils/download'
+      showing: >-
+        Showing {shown} of {total} symbol-and-path rows — {symbols} distinct
+        names across {extensions} extensions.
+      noMatch: No symbol or path matches that text.
+      noSpecifiers: >-
+        No named imports were recorded at all. This analysis predates specifier
+        collection, so refresh it to get symbol-level answers.
+      defaultExport: default export
+      defaultHint: >-
+        The module's default export, imported under whatever local name each
+        extension chose. Those local names are not recorded and do not matter —
+        the default export is the thing that has to keep existing.
+      cantTellLabel: Cannot rule out
+      cantTellHint: >-
+        Reach this path without naming anything — a whole-module import, a
+        dynamic import() or a re-export — so this symbol cannot be ruled out
+        for them: {extensions}
+      noRiskHint: >-
+        The risk rules describe shell's own tree and say nothing meaningful
+        about @rancher/components, which is published separately.
+      namespaceTitle: Paths imported whole
+      namespaceDescription: >-
+        Nothing names an individual export from these, so no symbol-level
+        answer exists for them. An extension importing a whole module could be
+        using anything in it, and a symbol search above will never return these
+        rows — which is exactly why they are listed here in full.
+      unrecordedTitle: Paths with no recorded names
+      unrecordedDescription: >-
+        Reached only through a dynamic import() or a re-export, neither of which
+        records which names were taken. These paths are counted but carry no
+        symbols, which is a limit of the scanner rather than a finding about
+        the code.
+      caveatsTitle: What this list does not tell you
+      caveat:
+        notUsage: >-
+          It records imports, not calls. An extension that imports a symbol and
+          never uses it is still listed, so read the extension list as everyone
+          who might break rather than everyone who will.
+        pathCounts: >-
+          The import count is per path, not per symbol. The analysis stores one
+          count for each path with the set of names beside it, so the number is
+          import statements against the path the symbol came from.
+        namespace: >-
+          Three import forms name nothing — a whole-module import, a dynamic
+          import() and a re-export — so an extension using one can never be
+          ruled out for any symbol in that module. Those extensions are
+          counted in their own column and never folded into the used-by count.
+        unrecorded: >-
+          Where a path has no named importers at all, there is no row to carry
+          that warning, so the path is listed in its own table below instead.
+          No symbols recorded is not the same fact as no symbols used.
+        stale: >-
+          Everything here comes from the saved import analysis, read at each
+          extension's released tag at the time it ran. An extension that has
+          released since is described by code nobody is running.
     risk:
       private: Private
       internal: Internal
@@ -325,6 +391,7 @@ extensionsCenter:
     tabs:
       totals: Per Extension
       surface: API Surface
+      symbols: Symbol Impact
       shell: Shell Paths
       components: Components Paths
       external: External Packages
@@ -377,6 +444,9 @@ extensionsCenter:
       risk: Risk
       area: Area
       symbols: Symbols
+      symbol: Symbol
+      cantTell: Cannot rule out
+      pathImports: Path imports
       paths: Paths
       riskyPaths: Needing attention
       meaning: What it means
@@ -413,8 +483,57 @@ extensionsCenter:
     tabs:
       overview: Overview
       cause: By Cause
+      duplication: Duplication
       leaks: Externalization
       perExtension: Extension Detail
+    duplication:
+      description: >-
+        Packages carried by more than one published bundle. Every extension
+        ships its own copy of whatever it was not told to externalize, so a
+        dependency used by eight extensions is downloaded eight times over by
+        anyone who installs all eight.
+      thresholdLabel: Minimum extensions carrying it
+      threshold: '{count} extensions or more'
+      none: No package is carried by that many extensions.
+      hostProvided: Host provides it
+      hostProvidedHint: >-
+        The host already loads this at runtime, so every copy inside a bundle
+        is removable rather than all but one.
+      splitHint: >-
+        The carriers resolved this to different versions, so one shared copy
+        means somebody has to move. Worth knowing before proposing it.
+      noVersionHint: >-
+        No version resolved. Either the lockfile could not be read or the name
+        is not a real package, so this is unknown rather than agreement.
+      unmeasured: >-
+        Source maps could not be read for {count} analysed extension(s), so
+        they contribute nothing to the figures below — those are summed over
+        {measured}. Not measured: {extensions}
+      unscaled: >-
+        Excluded because their source maps carried no content to measure
+        against, so their bytes could not be scaled to disk: {extensions}
+      method: >-
+        Shipped sizes are source-map bytes scaled by each bundle's own
+        source-to-disk ratio before being summed. Across the published
+        extensions that ratio runs from 0.30 to 0.66, so one shared figure
+        would be wrong for almost all of them. Savings are estimates.
+      savingKind:
+        all-copies: >-
+          The host already provides this, so externalizing it removes every
+          copy rather than all but one.
+        all-but-one: >-
+          The host does not provide this, so externalizing it means shell
+          shipping one shared copy. The saving is every copy but the largest.
+      summary:
+        packages: Duplicated packages
+        shipped: All copies, shipped
+        saving: Estimated saving
+        shellCaused: Of which shell-caused
+        versionSplits: With version disagreement
+      cols:
+        carriedBy: Carried by
+        allCopies: All copies
+        saving: Saving if external
     summary:
       published: Published bundles
       totalBytes: Total shipped JS

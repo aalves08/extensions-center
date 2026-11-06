@@ -191,7 +191,14 @@ export function emptySurface(): ApiSurface {
   };
 }
 
-const stripPrefix = (path: string) => path.replace(/^@rancher\/shell\//, '').replace(/^@shell\//, '');
+/**
+ * A shell import path with the package prefix removed.
+ *
+ * Exported because the symbol index has to produce the same `rel` this does —
+ * two copies of the prefix list would drift the first time an alias changed,
+ * and the two views would then disagree about what the same path is called.
+ */
+export const relShellPath = (path: string) => path.replace(/^@rancher\/shell\//, '').replace(/^@shell\//, '');
 
 export function buildApiSurface(doc: ImportAnalysisDoc | null): ApiSurface {
   if (!doc) {
@@ -216,7 +223,7 @@ export function buildApiSurface(doc: ImportAnalysisDoc | null): ApiSurface {
   }
 
   const paths: ApiSurfacePath[] = (doc.shellPaths || []).map((p) => {
-    const rel = stripPrefix(p.path);
+    const rel = relShellPath(p.path);
 
     return {
       path:       p.path,
@@ -281,7 +288,7 @@ export function buildApiSurface(doc: ImportAnalysisDoc | null): ApiSurface {
       paths:      shell.length,
       imports:    shell.reduce((sum, s) => sum + s.count, 0),
       specifiers: specs.size,
-      risky:      shell.filter((s) => pathRisk(stripPrefix(s.path)) !== 'ok').length,
+      risky:      shell.filter((s) => pathRisk(relShellPath(s.path)) !== 'ok').length,
     };
   }).sort((a, b) => b.risky - a.risky || b.paths - a.paths || a.name.localeCompare(b.name));
 

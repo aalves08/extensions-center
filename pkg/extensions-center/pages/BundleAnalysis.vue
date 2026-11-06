@@ -9,6 +9,7 @@ import Tab from '@shell/components/Tabbed/Tab.vue';
 
 import AnalysisProgressBar from '../components/AnalysisProgressBar.vue';
 import BundleExtensionDetail from '../components/BundleExtensionDetail.vue';
+import BundleDuplication from '../components/BundleDuplication.vue';
 import BundleOverviewTable from '../components/BundleOverviewTable.vue';
 import SectionHeader from '../components/SectionHeader.vue';
 import { useBundleAnalysis } from '../composables/useBundleAnalysis';
@@ -272,6 +273,19 @@ onMounted(() => analysis.load());
               </span>
             </template>
           </SortableTable>
+        </Tab>
+
+        <!--
+          Under the cause tab, which it extends: causes say who owns a byte,
+          this says how many times that byte was downloaded. Above leaks,
+          because leaks is the special case where the duplicate is shell.
+        -->
+        <Tab
+          name="duplication"
+          :label="t('extensionsCenter.bundleAnalysis.tabs.duplication')"
+          :weight="22"
+        >
+          <BundleDuplication :doc="doc" />
         </Tab>
 
         <Tab
