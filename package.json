@@ -1,6 +1,6 @@
 {
   "name": "extensions-center",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": false,
   "engines": {
     "node": ">=24"
@@ -24,5 +24,8 @@
     "serve-pkgs": "./node_modules/@rancher/shell/scripts/serve-pkgs",
     "publish-pkgs": "./node_modules/@rancher/shell/scripts/extension/publish",
     "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14"
   }
 }

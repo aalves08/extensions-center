@@ -120,10 +120,31 @@ export function useDependabotPrs(store: RancherStore) {
     return promise;
   };
 
+  /**
+   * The bumps in one named pull request.
+   *
+   * Deliberately not routed through `load`, which only ever sees PRs opened by
+   * Dependabot itself. The dependency-impact page is given a PR number by a
+   * person, and a human-opened PR that happens to carry Dependabot's commits —
+   * a rebase, a manual roll-up of several bots' work — has the same trailers
+   * and the same answer. Filtering by author here would reject it and say
+   * "no bumps found", which looks like the PR is harmless.
+   *
+   * Uncached: it is one call to the PR and one to its commits, and the page
+   * that uses it is the one place where re-reading on demand is the point.
+   */
+  const loadPull = async(repo: string, number: number): Promise<PrFix[]> => {
+    const pull = await api.get<GhPull>(`/repos/${ repo }/pulls/${ number }`);
+
+    return await describe(repo, pull);
+  };
+
   /** Drops the held results, so an explicit refresh re-reads the PRs. */
   const invalidate = (): void => {
     cache.clear();
   };
 
-  return { load, invalidate };
+  return {
+    load, loadPull, invalidate
+  };
 }

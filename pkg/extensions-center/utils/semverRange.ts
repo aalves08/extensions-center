@@ -14,19 +14,33 @@ import { compareSemver } from './version';
  * when the output is a security claim.
  */
 
+/**
+ * A version `compareSemver` can actually rank: three numeric parts, with an
+ * optional prerelease or build suffix.
+ *
+ * Spelled out rather than reusing a looser `\d[^\s,]*` because `compareSemver`
+ * sorts anything it cannot parse *last* instead of refusing it. A clause like
+ * `1.2.x` would otherwise match the comparator grammar, reach the comparison,
+ * and come back as a confident `false` — the exact "quietly dropping a real
+ * finding" this module's contract rules out. Requiring the shape up front turns
+ * those into `null` instead.
+ */
+const VERSION = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z-.]+)?$/;
+
 /** `>= 4.0.0`, `< 1.2.3`, `= 1.0.0`, or a bare version meaning equality. */
-const CLAUSE = /^(>=|<=|==|=|>|<)?\s*v?(\d[^\s,]*)$/;
+const CLAUSE = /^(>=|<=|==|=|>|<)?\s*(\S+)$/;
 
 /**
  * Whether `version` falls inside `range`.
  *
- * `null` means undetermined: either there is no range to check against, or one
- * of its clauses is in a form this does not recognise. One unparseable clause
- * poisons the whole answer rather than being skipped, since dropping a clause
- * from an AND can only ever widen the range and turn a miss into a false hit.
+ * `null` means undetermined: there is no range to check against, the version
+ * itself is not a shape this can rank, or one of the range's clauses is in a
+ * form this does not recognise. One unparseable clause poisons the whole answer
+ * rather than being skipped, since dropping a clause from an AND can only ever
+ * widen the range and turn a miss into a false hit.
  */
 export function satisfiesRange(version: string, range: string | null | undefined): boolean | null {
-  if (!range) {
+  if (!range || !VERSION.test(version || '')) {
     return null;
   }
 
@@ -39,7 +53,7 @@ export function satisfiesRange(version: string, range: string | null | undefined
   for (const clause of clauses) {
     const parsed = CLAUSE.exec(clause);
 
-    if (!parsed) {
+    if (!parsed || !VERSION.test(parsed[2])) {
       return null;
     }
 

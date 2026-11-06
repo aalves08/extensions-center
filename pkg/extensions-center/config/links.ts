@@ -36,6 +36,16 @@ export const IMPORTANT_LINKS: ImportantLink[] = [
     description: 'Current extensions architecture overview.',
     url:         'https://confluence.suse.com/spaces/CU/pages/1691779146/Current+extensions+architecture',
   },
+  {
+    label:       'Shell vs Rancher boundaries',
+    description: 'Where shell ends and Rancher begins, and which side owns what.',
+    url:         'https://confluence.suse.com/spaces/CU/pages/2226487510/Shell+vs+Rancher+boundary',
+  },
+  {
+    label:       'How extensions bundling works',
+    description: 'What ends up in a built extension, and why.',
+    url:         'https://confluence.suse.com/spaces/CU/pages/2232811686/How+Extensions+bundling+works',
+  },
 ];
 
 /** Public dev docs, linked from the actions card */

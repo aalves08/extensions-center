@@ -13,6 +13,31 @@ import { BundleCause } from '../utils/bundleCause';
 
 export type { BundleCause };
 
+/** Which kind of ref a reading was taken at. `InventoryRefSource` mirrors it. */
+export type AnalysisRefSource = 'release' | 'tag' | 'branch';
+
+/**
+ * What a stored row remembers about where it came from.
+ *
+ * Every field is optional, and deliberately so: adding them does not change
+ * how an older document deserialises, so no cache version is bumped and
+ * nobody is forced into the five-minute rebuild to get them. A row written
+ * before this existed simply reports what it always did — the version — and
+ * the UI says the rest is unknown rather than inventing it.
+ *
+ * `fetchedAt` is per row because a single extension can now be re-analysed on
+ * its own, which leaves the document's own `fetchedAt` describing the other
+ * ten rows and not this one.
+ */
+export interface RowProvenance {
+  /** Release tag exactly as GitHub reports it, e.g. `kubewarden-4.2.1` */
+  tag?: string;
+  /** Where the version came from, so the UI can admit when it is a guess */
+  source?: AnalysisRefSource;
+  /** When this row was last read, if later than the document's `fetchedAt` */
+  fetchedAt?: string;
+}
+
 /** One extension at one released version: the unit both pipelines work on. */
 export interface AnalysisTarget {
   /** Chart name — the `pkg/` directory, and the directory used on gh-pages */
@@ -26,7 +51,7 @@ export interface AnalysisTarget {
   /** Git ref the sources are read at */
   ref: string;
   /** Where the version came from, so the UI can admit when it is a guess */
-  source: 'release' | 'tag' | 'branch';
+  source: AnalysisRefSource;
   /**
    * False for an extension found in a repo's `pkg/` but absent from
    * rancher/ui-plugin-charts `manifest.json`.
@@ -60,7 +85,7 @@ export interface AnalysisTarget {
 export type ImportKind = 'shell' | 'components' | 'external' | 'internal';
 
 /** One row of the per-extension totals table. */
-export interface ExtensionImportTotals {
+export interface ExtensionImportTotals extends RowProvenance {
   name: string;
   repo: string;
   semver: string;
@@ -187,7 +212,7 @@ export interface BundleLeaks {
   hostPkgs: string[];
 }
 
-export interface ExtensionBundle {
+export interface ExtensionBundle extends RowProvenance {
   name: string;
   repo: string;
   semver: string;

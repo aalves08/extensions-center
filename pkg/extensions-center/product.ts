@@ -43,6 +43,14 @@ const pages: ProductChild[] = [
     labelKey:  'extensionsCenter.nav.bundleAnalysis',
     component: () => import('./pages/BundleAnalysis.vue')
   },
+  // Third of the analysis group rather than first: it reads the other two
+  // plus the inventory and says nothing useful until they have been built, so
+  // it sits after the pages that build them.
+  {
+    name:      'dependency-impact',
+    labelKey:  'extensionsCenter.nav.dependencyImpact',
+    component: () => import('./pages/DependencyImpact.vue')
+  },
   {
     name:      'workflow-tests',
     labelKey:  'extensionsCenter.nav.workflowTests',

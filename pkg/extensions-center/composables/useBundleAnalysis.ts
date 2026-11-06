@@ -109,6 +109,10 @@ export function useBundleAnalysis(store: RancherStore) {
       name:             target.name,
       repo:             target.repo,
       semver:           target.semver,
+      // Carried onto the row so a later freshness check can say what this
+      // reading was taken at without re-resolving every target to find out.
+      tag:              target.tag,
+      source:           target.source,
       inManifest:       target.inManifest,
       pluginDir:        null,
       chunkCount:       0,
@@ -275,7 +279,55 @@ export function useBundleAnalysis(store: RancherStore) {
     }
   };
 
+  /**
+   * Re-read one extension's published bundle and fold it back in.
+   *
+   * The expensive third of a single-extension refresh, and the reason that
+   * action is worth a progress bar: this still pulls every source map the
+   * extension published, which for harvester is around 12MB. It is one
+   * extension rather than eleven, so roughly a minute against several — but
+   * it is not instant and the button says so.
+   *
+   * Returns silently with no stored document, for the same reason the import
+   * side does: there is nothing to merge into.
+   */
+  const refreshOne = async(target: AnalysisTarget): Promise<void> => {
+    const current = doc.value;
+
+    if (!current) {
+      return;
+    }
+
+    progress.value = {
+      phase: 'maps', done: 0, total: 1, label: target.name
+    };
+
+    try {
+      const shellDeps = await fetchShellDeps();
+      const row: ExtensionBundle = {
+        ...await analyseExtension(target, shellDeps),
+        fetchedAt: new Date().toISOString(),
+      };
+
+      const merged: BundleAnalysisDoc = {
+        ...current,
+        extensions: current.extensions
+          .filter((e) => e.name !== target.name)
+          .concat(row)
+          .sort((a, b) => b.totalBundleBytes - a.totalBundleBytes),
+      };
+
+      doc.value = merged;
+
+      if (cache.canWrite()) {
+        await cache.write(merged);
+      }
+    } finally {
+      progress.value = null;
+    }
+  };
+
   return {
-    doc, loading, rebuilding, error, progress, needsBuild, stale, load, rebuild
+    doc, loading, rebuilding, error, progress, needsBuild, stale, load, rebuild, refreshOne
   };
 }

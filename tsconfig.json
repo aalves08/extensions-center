@@ -38,6 +38,7 @@
     ],
     "types": [
       "@types/node",
+      "@types/jest",
       "rancher",
       "shell"
     ]

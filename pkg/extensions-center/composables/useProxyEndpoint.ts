@@ -24,18 +24,26 @@ export type ProxyEndpointState =
   | 'error';
 
 /**
- * Makes sure `api.github.com` is reachable through Rancher's `/meta/proxy`.
+ * Makes sure a host is reachable through Rancher's `/meta/proxy`.
  *
- * GitHub's code search endpoint sends no CORS headers on a successful
- * authenticated response, so it can only be called server-side, and Rancher
- * will only proxy hosts named by a `ProxyEndpoint`. That object is
- * cluster-scoped, so this quietly creates it for admins and reports back for
- * everyone else rather than letting the known-extensions table fail with an
- * error that never mentions GitHub.
+ * Two callers, for the same underlying reason. GitHub's code search endpoint
+ * sends no CORS headers on a successful authenticated response, and Vertex's
+ * `rawPredict` answers the preflight with a 403, so neither can be called from
+ * the page and both have to be issued server-side. Rancher will only proxy
+ * hosts named by a `ProxyEndpoint`, which is cluster-scoped — so this quietly
+ * creates one for admins and reports back for everyone else, rather than
+ * letting the page fail with an error that never mentions the upstream.
  *
  * Creating it is idempotent by name: repeat visits find the existing object.
+ *
+ * `domain` and `name` default to the GitHub pair, so the original single-host
+ * call sites read exactly as they did.
  */
-export function useProxyEndpoint(store: RancherStore) {
+export function useProxyEndpoint(
+  store: RancherStore,
+  domain: string = GITHUB_PROXY_DOMAIN,
+  name: string = PROXY_ENDPOINT_NAME
+) {
   const state: Ref<ProxyEndpointState> = ref('unknown');
   const error: Ref<string | null> = ref(null);
 
@@ -58,7 +66,7 @@ export function useProxyEndpoint(store: RancherStore) {
       await store.dispatch('management/findAll', { type: MANAGEMENT.PROXY_ENDPOINT });
 
     return (endpoints || []).some((e) => (e?.spec?.routes || []).some(
-      (r) => r?.domain?.toLowerCase() === GITHUB_PROXY_DOMAIN
+      (r) => r?.domain?.toLowerCase() === domain.toLowerCase()
     ));
   };
 
@@ -91,8 +99,8 @@ export function useProxyEndpoint(store: RancherStore) {
     try {
       const created: SteveResource = await store.dispatch('management/create', {
         type:     MANAGEMENT.PROXY_ENDPOINT,
-        metadata: { name: PROXY_ENDPOINT_NAME },
-        spec:     { routes: [{ domain: GITHUB_PROXY_DOMAIN }] },
+        metadata: { name },
+        spec:     { routes: [{ domain }] },
       });
 
       await created.save();

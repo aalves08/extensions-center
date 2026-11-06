@@ -39,6 +39,7 @@ export const ROUTES = {
   NPM_METRICS:          `${ PRODUCT_ROUTE_NAME }-c-cluster-npm-metrics`,
   IMPORT_ANALYSIS:      `${ PRODUCT_ROUTE_NAME }-c-cluster-import-analysis`,
   BUNDLE_ANALYSIS:      `${ PRODUCT_ROUTE_NAME }-c-cluster-bundle-analysis`,
+  DEPENDENCY_IMPACT:    `${ PRODUCT_ROUTE_NAME }-c-cluster-dependency-impact`,
   SECURITY:             `${ PRODUCT_ROUTE_NAME }-c-cluster-security`,
   SETTINGS:             `${ PRODUCT_ROUTE_NAME }-c-cluster-settings`,
 } as const;
@@ -64,10 +65,10 @@ export const SECRET_KEYS = {
 
   ANTHROPIC_KEY: 'anthropic-api-key',
 
-  AWS_ACCESS_KEY_ID:     'aws-access-key-id',
-  AWS_SECRET_ACCESS_KEY: 'aws-secret-access-key',
-  AWS_SESSION_TOKEN:     'aws-session-token',
-  AWS_REGION:            'aws-region',
+  /** The whole service-account JSON, as downloaded from the GCP console */
+  VERTEX_SERVICE_ACCOUNT: 'vertex-service-account',
+  VERTEX_PROJECT_ID:      'vertex-project-id',
+  VERTEX_REGION:          'vertex-region',
 
   CLAUDE_AWS_API_KEY:      'claude-aws-api-key',
   CLAUDE_AWS_WORKSPACE_ID: 'claude-aws-workspace-id',
@@ -84,6 +85,33 @@ export const GITHUB_API = 'https://api.github.com';
  */
 export const GITHUB_PROXY_DOMAIN = 'api.github.com';
 export const PROXY_ENDPOINT_NAME = 'extensions-center-github';
+
+/**
+ * `ProxyEndpoint`s for the LLM hosts, one per provider.
+ *
+ * Registered together on dashboard mount rather than lazily on first use. The
+ * objects are cluster-scoped and only an admin may create them, so doing it on
+ * entry means one admin visit puts the routes in place for every user after —
+ * where first-use creation leaves a standard user staring at a Rancher-level
+ * refusal they cannot fix themselves.
+ *
+ * Vertex is the only one whose route is used today: Anthropic and Claude on
+ * AWS both answer a browser preflight and are fetched straight from the page.
+ * Theirs exist so the cluster is already able to proxy them, not because
+ * anything currently does.
+ *
+ * Named after the host rather than fixed, because two of the three hosts move
+ * with the configured region and must not share a name. With one name,
+ * switching region would try to create a second object over the first, get the
+ * 409 that `useProxyEndpoint` quite reasonably reads as "someone else already
+ * made it", and report ready while the stored route still pointed at the old
+ * host. Both providers' hostnames are already valid as Kubernetes names once
+ * the dots are hyphens.
+ */
+export const ANTHROPIC_PROXY_DOMAIN = 'api.anthropic.com';
+export const ANTHROPIC_PROXY_ENDPOINT_NAME = 'extensions-center-anthropic';
+export const vertexProxyEndpointName = (host: string): string => `extensions-center-vertex-${ host.replace(/\./g, '-') }`;
+export const claudeAwsProxyEndpointName = (host: string): string => `extensions-center-claude-aws-${ host.replace(/\./g, '-') }`;
 export const NPM_DOWNLOADS_API = 'https://api.npmjs.org';
 export const NPM_REGISTRY_API = 'https://registry.npmjs.org';
 
@@ -333,24 +361,29 @@ export const MANIFEST_PR_CONCURRENCY = 6;
 /**
  * Where Claude is called from.
  *
- * All three are reachable straight from the browser — each answers a CORS
- * preflight with `access-control-allow-origin: *` — so none of them needs a
- * server-side proxy. What differs is the credential, the URL shape and where
- * the model id goes, which `useClaude` handles.
+ * Three platforms, the same Messages API behind each. What differs is the
+ * credential, the URL shape, where the model id goes and whether the browser
+ * can reach the endpoint at all — `useClaude` reconciles the first three and
+ * `useVertexAuth` the last.
  *
  * `claudeAws` is Claude Platform on AWS: Anthropic's own platform billed
- * through an AWS account, which despite the name is not Bedrock. It is a
- * separate endpoint, a separate IAM namespace and separate keys — a Bedrock key
- * will not work on it and vice versa — so the two are offered side by side
- * rather than folded together.
+ * through an AWS account, which despite the name is not Bedrock. Separate
+ * endpoint, separate IAM namespace, separate keys — a Bedrock key will not
+ * work on it. Bedrock itself was offered here and was dropped: it is the only
+ * one of the four needing SigV4 request signing against a long-lived AWS
+ * secret held in the browser, which is strictly worse than this for the same
+ * models.
  *
- * Google Vertex AI was here and was removed. It is the only one of the four
- * that cannot authenticate from a browser with something a person can paste:
- * it rejects API keys outright and wants an OAuth2 bearer, which means either a
- * service-account key file (blocked by policy in a lot of organisations) or a
- * token that expires every hour.
+ * `vertex` is the one that cannot be called directly. Its `rawPredict`
+ * endpoint needs `Authorization` and `application/json`, which makes the
+ * request non-simple, and Google answers the resulting CORS preflight with a
+ * 403 carrying no allow-origin header at all. Measured, not assumed, against
+ * both the regional and global hosts. The data call therefore goes through
+ * Rancher's `/meta/proxy` — see `vertexHost` and `vertexProxyEndpointName`.
+ * The *token* exchange is a different matter and does work straight from the
+ * browser; see `GCP_TOKEN_URL`.
  */
-export const LLM_PROVIDERS = ['anthropic', 'claudeAws', 'bedrock'] as const;
+export const LLM_PROVIDERS = ['anthropic', 'vertex', 'claudeAws'] as const;
 
 export const DEFAULT_LLM_PROVIDER = 'anthropic';
 
@@ -360,38 +393,176 @@ export const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
  * Claude Platform on AWS, which is regional in the hostname and nowhere else.
  * The path, the body and the version header are all the first-party Messages
  * API exactly as-is.
+ *
+ * Split out from the URL because the `ProxyEndpoint` wants the host on its
+ * own, and the two must not be allowed to drift apart.
  */
-export const CLAUDE_AWS_API_URL = (region: string) => `https://aws-external-anthropic.${ region }.api.aws/v1/messages`;
+export function claudeAwsHost(region: string): string {
+  return `aws-external-anthropic.${ region.trim().toLowerCase() }.api.aws`;
+}
+
+export const CLAUDE_AWS_API_URL = (region: string) => `https://${ claudeAwsHost(region) }/v1/messages`;
 
 /** Sent in the `anthropic-version` header by Anthropic and Claude on AWS alike… */
 export const ANTHROPIC_VERSION = '2023-06-01';
-/** …and in the request body, with its own value, by Bedrock. */
-export const BEDROCK_ANTHROPIC_VERSION = 'bedrock-2023-05-31';
+/** …and in the request *body*, with its own value, by Vertex. */
+export const VERTEX_ANTHROPIC_VERSION = 'vertex-2023-10-16';
+
+/**
+ * Hostname serving Vertex for a location.
+ *
+ * Three different shapes, which is worth spelling out because getting it wrong
+ * returns a 404 that reads like the model does not exist:
+ *
+ * - `global`      → `aiplatform.googleapis.com`
+ * - `us` / `eu`   → `aiplatform.{loc}.rep.googleapis.com` (multi-region)
+ * - anything else → `{region}-aiplatform.googleapis.com`
+ */
+export function vertexHost(location: string): string {
+  const loc = location.trim().toLowerCase();
+
+  if (loc === 'global') {
+    return 'aiplatform.googleapis.com';
+  }
+
+  if (loc === 'us' || loc === 'eu') {
+    return `aiplatform.${ loc }.rep.googleapis.com`;
+  }
+
+  return `${ loc }-aiplatform.googleapis.com`;
+}
+
+/**
+ * Vertex takes the model in the URL and nothing of it in the body.
+ *
+ * `rawPredict` rather than `predict`: it passes the body through to Anthropic
+ * untouched, which is what lets the same Messages payload serve all three
+ * providers.
+ */
+export function vertexApiUrl(project: string, location: string, model: string): string {
+  return `https://${ vertexHost(location) }/v1/projects/${ project }/locations/${ location }` +
+    `/publishers/anthropic/models/${ model }:rawPredict`;
+}
+
+/**
+ * OAuth2 token exchange for a service account.
+ *
+ * Reachable straight from the browser, unlike `rawPredict`: the exchange is a
+ * form-encoded POST with no custom headers, which is a CORS-*simple* request,
+ * so it is never preflighted and Google returns `access-control-allow-origin`
+ * on the response. Verified against a browser origin.
+ */
+export const GCP_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+
+/** The only scope `rawPredict` needs. */
+export const GCP_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+
+/** Seconds a minted access token is requested for. Google caps this at 3600. */
+export const GCP_TOKEN_LIFETIME = 3600;
+
+/**
+ * Refresh this many seconds before expiry.
+ *
+ * A token that expires mid-batch fails the rest of the batch, and a repo
+ * classification run makes a call every few seconds, so the window is wide.
+ */
+export const GCP_TOKEN_SKEW = 300;
 
 /**
  * Default model per provider.
  *
- * Haiku rather than Sonnet because the only thing this calls Claude for is
- * classifying repo metadata in bulk. Claude Platform on AWS takes first-party
- * model ids unchanged; Bedrock has its own naming. Which ids an account can
- * actually reach varies — Bedrock needs the model enabled in the region — so
- * Settings lets the id be overridden.
+ * Sonnet rather than Opus: the work this does is reading a README and writing
+ * one sentence about it, across every repo in the list, and Sonnet is the
+ * cheaper model that does that just as well. Opus is a word in the override
+ * field away for anyone who wants it.
+ *
+ * The same model everywhere: Claude Platform on AWS and Vertex both take
+ * first-party ids, Vertex with an `@` before a dated snapshot rather than a
+ * `-` (see `vertexModelId`). Which ids an account can actually reach varies —
+ * Vertex needs the model enabled in Model Garden for the project — so Settings
+ * lets the id be overridden per provider.
  */
 export const DEFAULT_MODELS = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  claudeAws: 'claude-haiku-4-5-20251001',
-  bedrock:   'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+  anthropic: 'claude-sonnet-4-6',
+  vertex:    'claude-sonnet-4-6',
+  claudeAws: 'claude-sonnet-4-6',
 } as const;
 
-export const DEFAULT_AWS_REGION = 'us-east-1';
+/** The model the override field suggests for anyone who wants the strongest. */
+export const STRONGEST_MODEL = 'claude-opus-5';
 
 /**
- * Claude Platform on AWS has no default region of its own: unlike Bedrock it
- * refuses to guess, and the region is part of the hostname, so a wrong one is a
- * DNS answer rather than an API error. This is only the placeholder shown in
- * the form.
+ * The model Test connection calls, whatever is configured above it.
+ *
+ * The button answers "do these credentials reach a Claude endpoint", which the
+ * cheapest model answers as well as any other — and it sits on a Settings page
+ * where it gets pressed repeatedly. The trade is that on Vertex this id has to
+ * be enabled in Model Garden too, so the hint under the button says which
+ * model it uses.
+ */
+export const TEST_MODEL = 'claude-haiku-4-5-20251001';
+
+/**
+ * Model id in the spelling Vertex wants.
+ *
+ * Current-generation models keep their bare first-party id. A dated snapshot
+ * separates the date with `@` instead of `-`, so `claude-haiku-4-5-20251001`
+ * has to become `claude-haiku-4-5@20251001` or Vertex 404s.
+ */
+export function vertexModelId(model: string): string {
+  return model.replace(/-(\d{8})$/, '@$1');
+}
+
+/**
+ * Claude Platform on AWS has no default region of its own: it refuses to
+ * guess, and the region is part of the hostname, so a wrong one is a DNS
+ * answer rather than an API error. This is only the placeholder shown in the
+ * form.
  */
 export const DEFAULT_CLAUDE_AWS_REGION = 'us-east-1';
+
+/**
+ * Vertex's default location.
+ *
+ * `global` rather than a region: it has the widest model availability and the
+ * fewest capacity refusals, and it keeps the host out of the regional naming
+ * scheme entirely.
+ */
+export const DEFAULT_VERTEX_REGION = 'global';
+
+/**
+ * How much of a README the classifier is shown.
+ *
+ * Enough to carry the opening pitch, which is where a Rancher extension README
+ * says what it is for; past that they turn into install steps and development
+ * instructions that describe every extension identically. Keeping it short
+ * also keeps a batch of twelve well inside the token budget.
+ */
+export const CLASSIFIER_README_CHARS = 1500;
+
+/**
+ * How much of a README the *re-categorisation* pass is shown.
+ *
+ * Four times the first pass, for the repos the first pass could not place. The
+ * opening pitch is where an extension says what it is for, so when a repo
+ * landed in `other` the opening pitch is precisely the thing that failed —
+ * usually because the repo is a fork, a collection or a sample, and says so
+ * further down under Usage or Contents. This pass is only ever run over a
+ * handful of rows and asks for a single word back, so the extra input is
+ * cheap: 6000 characters is roughly 1500 tokens, about half a US cent per
+ * hundred repos at Sonnet list prices.
+ */
+export const CLASSIFIER_DEEP_README_CHARS = 6000;
+
+/**
+ * READMEs fetched at once when describing repos.
+ *
+ * Higher than the other concurrency limits because these come off
+ * `raw.githubusercontent.com`, which carries no rate limit for us to spend —
+ * see `getRawText`. The ceiling here is politeness and browser socket count,
+ * not budget.
+ */
+export const CLASSIFIER_README_CONCURRENCY = 8;
 
 /**
  * Days before the cached known-repos document is considered stale.
@@ -429,5 +600,42 @@ export const BUNDLE_ANALYSIS_CACHE_VERSION = 3;
  * Shorter than the known-repos TTL because these track released versions, and a
  * new extension release lands often enough that a month-old reading is likely
  * to be describing versions nobody is running.
+ *
+ * A blunt instrument, and the dependency-impact page does better: it compares
+ * each row's recorded version against the extension's current release, which
+ * is right where this is only ever a guess. This stays as the answer for the
+ * pages that have not been given a cheap exact check.
  */
 export const ANALYSIS_TTL_DAYS = 14;
+
+// ─── Dependency impact ───────────────────────────────────────────────────────
+
+/**
+ * Packages assessed in one model call.
+ *
+ * Far smaller than the classifier's twelve because the bulk of each input is
+ * release notes rather than a line of metadata. Three keeps a request around
+ * the size of one classifier batch, and a failed batch costs three packages
+ * rather than a whole pull request.
+ */
+export const BUMP_ADVISOR_BATCH_SIZE = 3;
+
+/**
+ * How much of one package's release notes the model is shown.
+ *
+ * Release notes are the one input that decides whether a bump is breaking, so
+ * this is deliberately generous — but a busy project's notes for eight
+ * releases run to tens of thousands of characters, most of it dependency
+ * churn and contributor lists.
+ */
+export const BUMP_RELEASE_NOTES_CHARS = 2500;
+
+/**
+ * Releases read between what the extensions have and what the host is moving
+ * to.
+ *
+ * Bounded because a package several majors behind would otherwise pull its
+ * entire history. Eight covers the realistic gap; past that the answer is
+ * "this is a long way behind" and no amount of notes changes it.
+ */
+export const BUMP_RELEASE_NOTES_LIMIT = 8;

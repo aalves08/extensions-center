@@ -45,6 +45,14 @@ export interface InventoryExtension {
   /** Repo-relative path of the lockfile read, so a row can show its own source */
   lockfile: string | null;
   /**
+   * When this row was last read, if later than the document's `fetchedAt`.
+   *
+   * Set only by a single-extension re-read, which leaves the document's own
+   * timestamp describing every row except this one. Optional so that adding
+   * it costs no cache version — see `RowProvenance` in `types/analysis.ts`.
+   */
+  fetchedAt?: string;
+  /**
    * Resolved package name to every version the lockfile pinned it to.
    *
    * Several versions is normal rather than an error — that is what nested

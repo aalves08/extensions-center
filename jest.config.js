@@ -12,26 +12,40 @@
  */
 module.exports = {
   testEnvironment: 'jsdom',
-  roots:           ['<rootDir>/pkg'],
+
+  // Without this, jsdom makes jest prefer each package's `browser` export. For
+  // `@vue/test-utils` that is an IIFE bundle expecting a global `Vue`, so
+  // merely requiring it throws `ReferenceError: Vue is not defined`. Asking for
+  // the `node` condition gets the CommonJS build, which imports Vue properly.
+  testEnvironmentOptions: { customExportConditions: ['node'] },
+
+  roots:     ['<rootDir>/pkg'],
   // Both conventions: a `__tests__` folder beside the code, or a `.test.ts`
   // sitting next to the file it covers.
-  testMatch:       ['**/__tests__/**/*.test.ts', '**/*.test.ts'],
+  testMatch: ['**/__tests__/**/*.test.ts', '**/*.test.ts'],
 
   moduleFileExtensions: ['ts', 'js', 'json', 'vue'],
 
-  // There are no test files yet. Until there are, `yarn test` reporting "no
-  // tests" as a failure is noise rather than a signal; remove this once the
-  // suite exists so an empty run goes back to being an error.
-  passWithNoTests: true,
-
   transform: {
+    // `configFile`/`babelrc` off on purpose. The root `babel.config.js` just
+    // re-exports the shell's, which is a *build* config: it loads plugins such
+    // as `babel-plugin-transform-require-context` that only exist among the
+    // shell's own devDependencies and so are not installed here. The presets
+    // below are everything a test needs, and leaving the root config out keeps
+    // the transform from depending on packages this project never declares.
     '^.+\\.ts$': ['babel-jest', {
-      presets: [
+      configFile: false,
+      babelrc:    false,
+      presets:    [
         ['@babel/preset-env', { targets: { node: 'current' } }],
         '@babel/preset-typescript',
       ],
     }],
-    '^.+\\.js$':  ['babel-jest', { presets: [['@babel/preset-env', { targets: { node: 'current' } }]] }],
+    '^.+\\.js$': ['babel-jest', {
+      configFile: false,
+      babelrc:    false,
+      presets:    [['@babel/preset-env', { targets: { node: 'current' } }]],
+    }],
     '^.+\\.vue$': '@vue/vue3-jest',
   },
 
